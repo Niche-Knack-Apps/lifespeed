@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: content:; font-src 'self'; connect-src 'self';">
+    <title>At the Speed of Life</title>
+    <link rel="icon" type="image/png" href="../icon.png">
+    <link rel="apple-touch-icon" href="../icon.png">
+    <meta name="theme-color" content="#1a1a1a">
+    <link rel="stylesheet" href="css/main.css">
+    <style>
+        /* Critical CSS inlined for instant render */
+        :root {
+            --bg-primary: #1a1a1a;
+            --text-primary: #e0e0e0;
+            --accent: #B08D57;
+        }
+        body {
+            margin: 0;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-size: 1.2rem;
+            color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading state (shown briefly) -->
+    <div id="loading" class="loading">
+        <span>Loading...</span>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="app" class="app hidden">
+        <!-- Header -->
+        <header class="header">
+            <button id="btn-menu" class="btn-icon" aria-label="Menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <h1 class="header-title" id="header-title">New Entry</h1>
+            <div class="header-actions">
+                <button id="btn-find" class="btn-icon" aria-label="Find entries (Ctrl+K)" title="Find entries (Ctrl+K)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                </button>
+                <button id="btn-new" class="btn-icon" aria-label="New entry (Ctrl+N)" title="New entry (Ctrl+N)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </button>
+                <button id="btn-settings" class="btn-icon" aria-label="Settings" title="Settings">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <div class="main-container">
+            <!-- Sidebar (Entries List) -->
+            <aside id="sidebar" class="sidebar">
+                <div class="sidebar-header">
+                    <h2>Entries</h2>
+                    <div class="sort-controls">
+                        <select id="sort-by" class="sort-select" title="Sort by">
+                            <option value="date-desc">Newest</option>
+                            <option value="date-asc">Oldest</option>
+                            <option value="modified-desc">Modified</option>
+                            <option value="modified-asc">Mod. Old</option>
+                            <option value="title-asc">A-Z</option>
+                            <option value="title-desc">Z-A</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="entries-list" class="entries-list">
+                    <!-- Entries populated by JS -->
+                </div>
+            </aside>
+
+            <!-- Sidebar backdrop for mobile -->
+            <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
+            <!-- Editor Area -->
+            <main class="editor-container">
+                <!-- Metadata Section (collapsible) -->
+                <div id="metadata-section" class="metadata-section collapsed">
+                    <button id="btn-toggle-metadata" class="btn-metadata-toggle">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                        <span>Metadata</span>
+                    </button>
+                    <div class="metadata-content">
+                        <div class="metadata-field">
+                            <label for="meta-title">Title</label>
+                            <input type="text" id="meta-title" placeholder="Entry title...">
+                        </div>
+                        <div class="metadata-field">
+                            <label for="meta-tags">Tags</label>
+                            <input type="text" id="meta-tags" placeholder="tag1, tag2, tag3...">
+                        </div>
+                        <div class="metadata-field">
+                            <label>Date</label>
+                            <span id="meta-date" class="meta-date"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Editor -->
+                <div class="editor-wrapper">
+                    <textarea id="editor" class="editor" placeholder="Start writing..." autofocus></textarea>
+                    <div id="preview" class="preview hidden"></div>
+                </div>
+
+                <!-- Toolbar -->
+                <div class="toolbar">
+                    <div id="toolbar-left" class="toolbar-left">
+                        <button id="btn-bold" class="btn-toolbar" title="Bold (Ctrl+B)"><strong>B</strong></button>
+                        <button id="btn-italic" class="btn-toolbar" title="Italic (Ctrl+I)"><em>I</em></button>
+                        <button id="btn-strikethrough" class="btn-toolbar" title="Strikethrough"><s>S</s></button>
+                        <button id="btn-code" class="btn-toolbar" title="Inline Code">&lt;/&gt;</button>
+                        <button id="btn-link" class="btn-toolbar" title="Insert Link">🔗</button>
+                        <button id="btn-checkbox" class="btn-toolbar" title="Checkbox">☐</button>
+                        <button id="btn-more-tools" class="btn-toolbar btn-accordion" title="More formatting">▼</button>
+                    </div>
+                    <div class="toolbar-center">
+                        <span id="status" class="status"></span>
+                    </div>
+                    <div class="toolbar-right">
+                        <button id="btn-source" class="btn-toolbar active" title="Source mode">Source</button>
+                        <button id="btn-preview" class="btn-toolbar" title="Preview mode">Preview</button>
+                    </div>
+                </div>
+
+                <!-- Secondary toolbar (accordion - hidden by default) -->
+                <div id="toolbar-secondary" class="toolbar toolbar-secondary hidden">
+                    <div class="toolbar-left">
+                        <button id="btn-quote" class="btn-toolbar" title="Quote">"</button>
+                        <button id="btn-heading" class="btn-toolbar" title="Heading">H</button>
+                        <button id="btn-bullet" class="btn-toolbar" title="Bullet List">•</button>
+                        <button id="btn-number" class="btn-toolbar" title="Numbered List">1.</button>
+                        <button id="btn-footnote" class="btn-toolbar" title="Footnote">[^]</button>
+                        <button id="btn-table" class="btn-toolbar" title="Insert Table">⊞</button>
+                        <button id="btn-hr" class="btn-toolbar" title="Horizontal Rule">─</button>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Mobile FAB -->
+        <button id="fab" class="fab" aria-label="Actions">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+        </button>
+    </div>
+
+    <!-- fzf-Style Finder Overlay -->
+    <div id="finder" class="finder hidden">
+        <div class="finder-container">
+            <div class="finder-header">
+                <span class="finder-prompt">&gt;</span>
+                <input type="text" id="finder-input" class="finder-input" placeholder="Search entries..." autofocus>
+                <button id="finder-close" class="btn-icon finder-close" aria-label="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="finder-body">
+                <div class="finder-results">
+                    <div id="finder-results-list" class="finder-results-list">
+                        <!-- Results populated by JS -->
+                    </div>
+                </div>
+                <div class="finder-preview">
+                    <div id="finder-preview-content" class="finder-preview-content">
+                        <div class="finder-preview-empty">Select an entry to preview</div>
+                    </div>
+                </div>
+            </div>
+            <div class="finder-footer">
+                <span><kbd>↑↓</kbd> navigate</span>
+                <span><kbd>Enter</kbd> open</span>
+                <span><kbd>Esc</kbd> cancel</span>
+                <span><kbd>#tag</kbd> <kbd>@date</kbd> filter</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button id="settings-close" class="btn-icon" aria-label="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Storage Section -->
+                <section class="settings-section">
+                    <h3>Storage</h3>
+                    <div class="setting-item">
+                        <label for="setting-entries-dir">Journal Directory</label>
+                        <div class="setting-input-group">
+                            <input type="text" id="setting-entries-dir" readonly>
+                            <button id="btn-choose-dir" class="btn-secondary">Choose...</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>Search Index</label>
+                        <div class="setting-input-group">
+                            <span id="index-status" class="index-status">Checking...</span>
+                            <button id="btn-rebuild-index" class="btn-secondary">Rebuild Index</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Appearance Section -->
+                <section class="settings-section">
+                    <h3>Appearance</h3>
+                    <div class="setting-item">
+                        <label for="setting-theme">Theme</label>
+                        <select id="setting-theme">
+                            <option value="system">System</option>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="sepia">Sepia</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="setting-font-size">Font Size</label>
+                        <select id="setting-font-size">
+                            <option value="small">Small</option>
+                            <option value="medium">Medium</option>
+                            <option value="large">Large</option>
+                            <option value="x-large">Extra Large</option>
+                        </select>
+                    </div>
+                </section>
+
+                <!-- About Section -->
+                <section class="settings-section about-section">
+                    <div class="about-header">
+                        <img src="images/niche-knack-logo.png" alt="niche-knack apps" class="about-logo">
+                        <h3 class="about-app-name">At the Speed of Life</h3>
+                        <p class="about-description">A blazing-fast, distraction-free journaling app with markdown support and instant search.</p>
+                        <span class="about-version">Version 1.0.0</span>
+                        <div class="about-org">
+                            <p>Part of <strong>niche-knack apps</strong></p>
+                            <p><a href="https://nicheknack.app" target="_blank" rel="noopener">nicheknack.app</a></p>
+                        </div>
+                    </div>
+
+                    <div class="donation-section">
+                        <h4>Support Development</h4>
+                        <p class="v4v-description">
+                            This app is free, built on the
+                            <a href="https://value4value.info/" target="_blank" rel="noopener">Value for Value</a> model.
+                        </p>
+
+                        <div class="donation-option" data-v4v="lightning">
+                            <div class="donation-info">
+                                <span class="donation-icon">&#9889;</span>
+                                <div class="donation-details">
+                                    <strong>Bitcoin Lightning</strong>
+                                    <small class="nk-address"></small>
+                                </div>
+                            </div>
+                            <div class="donation-action">
+                                <button class="btn-copy nk-btn-copy" data-copy="">Copy</button>
+                            </div>
+                        </div>
+
+                        <div class="donation-option" data-v4v="bitcoin">
+                            <div class="donation-info">
+                                <span class="donation-icon">&#8383;</span>
+                                <div class="donation-details">
+                                    <strong>Bitcoin On-chain</strong>
+                                    <small class="nk-address"></small>
+                                </div>
+                            </div>
+                            <div class="donation-action">
+                                <button class="btn-copy nk-btn-copy" data-copy="">Copy</button>
+                            </div>
+                        </div>
+
+                        <div class="donation-option" data-v4v="kofi">
+                            <div class="donation-info">
+                                <span class="donation-icon">&#9749;</span>
+                                <div class="donation-details">
+                                    <strong>Ko-fi</strong>
+                                    <small>Buy us a coffee</small>
+                                </div>
+                            </div>
+                            <div class="donation-action">
+                                <a href="#" class="btn-donate nk-external-link" target="_blank" rel="noopener">Donate</a>
+                            </div>
+                        </div>
+
+                        <div class="donation-option" data-v4v="paypal">
+                            <div class="donation-info">
+                                <span class="donation-icon">&#128179;</span>
+                                <div class="donation-details">
+                                    <strong>PayPal</strong>
+                                    <small>Traditional payment</small>
+                                </div>
+                            </div>
+                            <div class="donation-action">
+                                <a href="#" class="btn-donate nk-external-link" target="_blank" rel="noopener">Donate</a>
+                            </div>
+                        </div>
+
+                        <div class="other-ways">
+                            <strong class="other-ways-title">Other ways to help:</strong>
+                            <ul class="other-ways-list">
+                                <li>Share At the Speed of Life with fellow journalers</li>
+                                <li>Report bugs (<a href="mailto:hello@nicheknack.app">hello@nicheknack.app</a>)</li>
+                                <li>Suggest new features</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="debug-section">
+                        <h4>Debug Logs</h4>
+                        <p class="debug-description">Download logs to help troubleshoot issues.</p>
+                        <div id="debug-log-stats" class="debug-stats">Loading log info...</div>
+                        <div class="debug-actions">
+                            <button id="download-logs-btn" class="btn-primary">Download Logs</button>
+                            <button id="clear-logs-btn" class="btn-secondary">Clear</button>
+                        </div>
+                    </div>
+
+                    <div class="about-footer">
+                        <p>Learn more at <a href="https://nicheknack.app" target="_blank" rel="noopener">nicheknack.app</a></p>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <!-- Insert Context Menu (for right-click/long-press) -->
+    <div id="insert-context-menu" class="insert-context-menu hidden">
+        <button id="context-insert-image" class="context-menu-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+            </svg>
+            <span>Insert Image</span>
+        </button>
+        <button id="context-insert-file" class="context-menu-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>Insert File</span>
+        </button>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Custom Prompt Modal (Electron doesn't support native prompt) -->
+    <div id="prompt-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content prompt-modal-content">
+            <p id="prompt-message" class="prompt-message">Enter value:</p>
+            <input type="text" id="prompt-input" class="prompt-input" autocomplete="off">
+            <div class="prompt-actions">
+                <button id="prompt-cancel" class="btn-secondary">Cancel</button>
+                <button id="prompt-ok" class="btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Indexing Progress Overlay (for initial cache build) -->
+    <div id="indexing-overlay" class="indexing-overlay hidden">
+        <div class="indexing-content">
+            <div class="indexing-spinner"></div>
+            <div id="indexing-message" class="indexing-message">Building index...</div>
+            <div class="indexing-progress-bar">
+                <div id="indexing-progress-fill" class="indexing-progress-fill"></div>
+            </div>
+            <div id="indexing-status" class="indexing-status">This is a one-time operation</div>
+        </div>
+    </div>
+
+    <!-- Debug Logger (auto-initializes) -->
+    <script src="js/debug-logger.js"></script>
+
+    <!-- Metadata Cache (auto-initializes) -->
+    <script src="js/metadata-cache.js"></script>
+
+    <!-- niche-knack config -->
+    <script src="js/niche-knack-config.js"></script>
+    <script src="js/about-section.js"></script>
+
+    <!-- Scripts (bundled locally for offline use) -->
+    <script src="lib/marked.min.js"></script>
+    <script src="lib/marked-footnote.umd.min.js"></script>
+    <script src="lib/fuse.min.js"></script>
+    <script src="dist/app.bundle.js"></script>
+</body>
+</html>
