@@ -2,6 +2,7 @@
   "name": "at-the-speed-of-life",
   "version": "1.0.0",
   "description": "A blazing-fast, mobile-first journaling app - launch to typing in milliseconds",
+  "homepage": "https://nicheknack.app/at-the-speed-of-life",
   "main": "main.js",
   "scripts": {
     "start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
@@ -13,7 +14,7 @@
     "build:linux": "npm run bundle:prod && electron-builder --linux AppImage deb",
     "build:win": "npm run bundle:prod && electron-builder --win nsis portable",
     "build:mac": "npm run bundle:prod && electron-builder --mac dmg zip",
-    "build:all-desktop": "npm run bundle:prod && electron-builder --linux AppImage deb --win nsis portable --mac dmg zip",
+    "build:all-desktop": "npm run bundle:prod && electron-builder --linux AppImage deb --win nsis portable zip --mac dir",
     "cap:sync": "npm run bundle && npx cap sync",
     "cap:sync:android": "npm run bundle && npx cap sync android",
     "cap:sync:ios": "npm run bundle && npx cap sync ios",
@@ -61,7 +62,7 @@
     "productName": "At the Speed of Life",
     "copyright": "Copyright 2024 Niche-Knack",
     "directories": {
-      "output": "dist-electron"
+      "output": "dist"
     },
     "files": [
       "main.js",
@@ -87,8 +88,7 @@
     "linux": {
       "target": [
         "AppImage",
-        "deb",
-        "rpm"
+        "deb"
       ],
       "category": "Office",
       "icon": "icon.png",
@@ -96,8 +96,7 @@
     },
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        "dir"
       ],
       "category": "public.app-category.productivity",
       "icon": "icon.png"

@@ -18,9 +18,19 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import android.database.Cursor;
+import android.provider.DocumentsContract;
+import android.provider.DocumentsContract.Document;
 import android.provider.OpenableColumns;
 
 import org.json.JSONObject;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Callable;
+import java.util.ArrayList;
+import java.util.List;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -34,46 +44,103 @@ import java.nio.charset.StandardCharsets;
 public class FolderPickerPlugin extends Plugin {
     private static final String TAG = "FolderPickerPlugin";
 
+    /**
+     * Log to both Android Logcat AND JavaScript DebugLogger via Capacitor event.
+     * This ensures native logs appear in the unified downloadable logs.
+     */
+    private void logToJS(String level, String message) {
+        // Still log to Logcat for Android Studio debugging
+        switch (level) {
+            case "error":
+                Log.e(TAG, message);
+                break;
+            case "warn":
+                Log.w(TAG, message);
+                break;
+            default:
+                Log.d(TAG, message);
+                break;
+        }
+
+        // Send to JavaScript DebugLogger via Capacitor event
+        JSObject logEvent = new JSObject();
+        logEvent.put("level", level);
+        logEvent.put("message", "[Native] " + message);
+        logEvent.put("tag", TAG);
+        logEvent.put("timestamp", System.currentTimeMillis());
+        notifyListeners("nativeLog", logEvent);
+    }
+
     @PluginMethod
     public void pickDirectory(PluginCall call) {
-        Log.d(TAG, "pickDirectory called");
+        logToJS("debug", "pickDirectory called");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        // Hint to start in Documents folder (API 26+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            Uri initialUri = Uri.parse("content://com.android.externalstorage.documents/document/primary:Documents");
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri);
+            logToJS("debug", "pickDirectory: set initial URI hint to Documents folder");
+        }
+
         startActivityForResult(call, intent, "handleDirectoryResult");
     }
 
     @ActivityCallback
     private void handleDirectoryResult(PluginCall call, ActivityResult result) {
-        Log.d(TAG, "handleDirectoryResult called with resultCode: " + result.getResultCode());
+        logToJS("debug", "handleDirectoryResult called with resultCode: " + result.getResultCode());
 
         if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
             Uri treeUri = result.getData().getData();
-            Log.d(TAG, "Selected URI: " + treeUri.toString());
+            logToJS("debug", "Selected URI: " + treeUri.toString());
 
             // Take persistent permission for both read and write
             final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
             try {
                 getContext().getContentResolver().takePersistableUriPermission(treeUri, takeFlags);
-                Log.d(TAG, "Persistent permission granted");
+                logToJS("debug", "Persistent permission granted");
             } catch (SecurityException e) {
-                Log.e(TAG, "Failed to take persistent permission: " + e.getMessage());
+                logToJS("error", "Failed to take persistent permission: " + e.getMessage());
             }
 
             JSObject ret = new JSObject();
             ret.put("success", true);
             ret.put("uri", treeUri.toString());
 
-            // Get display name
+            // Get display name and run diagnostics
             DocumentFile directory = DocumentFile.fromTreeUri(getContext(), treeUri);
             if (directory != null) {
                 ret.put("name", directory.getName());
+
+                // Diagnostic logging to help debug issues
+                logToJS("debug", "Diagnostic - Directory exists: " + directory.exists());
+                logToJS("debug", "Diagnostic - Is directory: " + directory.isDirectory());
+                logToJS("debug", "Diagnostic - Can read: " + directory.canRead());
+                logToJS("debug", "Diagnostic - Can write: " + directory.canWrite());
+
+                try {
+                    DocumentFile[] children = directory.listFiles();
+                    logToJS("debug", "Diagnostic - Child count: " + (children != null ? children.length : "null"));
+
+                    if (children != null && children.length > 0) {
+                        int maxToLog = Math.min(5, children.length);
+                        for (int i = 0; i < maxToLog; i++) {
+                            DocumentFile child = children[i];
+                            logToJS("debug", "Diagnostic - Child[" + i + "]: " + child.getName() +
+                                    " isDir=" + child.isDirectory());
+                        }
+                    }
+                } catch (Exception e) {
+                    logToJS("error", "Diagnostic check failed: " + e.getMessage());
+                }
             }
 
             call.resolve(ret);
         } else {
-            Log.d(TAG, "Directory selection cancelled or failed");
+            logToJS("debug", "Directory selection cancelled or failed");
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", "User cancelled or selection failed");
@@ -84,7 +151,7 @@ public class FolderPickerPlugin extends Plugin {
     @PluginMethod
     public void listEntries(PluginCall call) {
         String uriString = call.getString("uri");
-        Log.d(TAG, "listEntries called with URI: " + uriString);
+        logToJS("debug", "listEntries called with URI: " + uriString);
 
         if (uriString == null) {
             JSObject ret = new JSObject();
@@ -94,65 +161,225 @@ public class FolderPickerPlugin extends Plugin {
             return;
         }
 
-        try {
-            Uri treeUri = Uri.parse(uriString);
-            DocumentFile directory = DocumentFile.fromTreeUri(getContext(), treeUri);
+        // Run in background thread to prevent ANR
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.submit(() -> {
+            try {
+                Uri treeUri = Uri.parse(uriString);
 
-            if (directory == null || !directory.exists()) {
+                // Try fast DocumentsContract approach first
+                logToJS("debug", "listEntries: trying DocumentsContract approach");
+                JSArray entries = listEntriesUsingDocumentsContract(treeUri, true);
+
+                // If that returns no results, fallback to DocumentFile (slower but more reliable)
+                if (entries == null || entries.length() == 0) {
+                    logToJS("warn", "listEntries: DocumentsContract returned no entries, trying DocumentFile fallback");
+                    entries = listEntriesUsingDocumentFile(treeUri, true);
+                }
+
+                logToJS("debug", "listEntries: returning " + entries.length() + " entries");
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("entries", entries);
+                call.resolve(ret);
+
+            } catch (Exception e) {
+                logToJS("error", "Error listing entries: " + e.getMessage());
                 JSObject ret = new JSObject();
                 ret.put("success", false);
-                ret.put("error", "Directory not found or inaccessible");
+                ret.put("error", e.getMessage());
                 call.resolve(ret);
-                return;
             }
+        });
 
-            JSArray entries = new JSArray();
-            DocumentFile[] files = directory.listFiles();
+        // Don't block main thread - let background thread handle completion
+        executor.shutdown();
+    }
 
-            for (DocumentFile file : files) {
-                // Only include directories (entry bundles)
-                if (file.isDirectory()) {
-                    String name = file.getName();
-                    if (name != null) {
-                        // Check if it has an index.md file inside
-                        DocumentFile indexFile = file.findFile("index.md");
-                        if (indexFile != null && indexFile.exists()) {
-                            JSObject entry = new JSObject();
-                            entry.put("dirname", name);
-                            entry.put("uri", file.getUri().toString());
-                            entry.put("indexUri", indexFile.getUri().toString());
-                            entry.put("mtime", indexFile.lastModified());
+    /**
+     * Fast directory listing using DocumentsContract cursor queries.
+     * May fail on some devices/storage providers.
+     * @param extractTitles Whether to extract titles from frontmatter (slower if true)
+     */
+    private JSArray listEntriesUsingDocumentsContract(Uri treeUri, boolean extractTitles) {
+        JSArray entries = new JSArray();
+        ContentResolver resolver = getContext().getContentResolver();
 
-                            // Read frontmatter title from index.md
-                            String title = extractTitleFromFrontmatter(indexFile);
-                            if (title != null && !title.isEmpty()) {
-                                entry.put("title", title);
+        try {
+            String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
+            Uri rootChildrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, rootDocId);
+
+            try (Cursor cursor = resolver.query(rootChildrenUri,
+                    new String[]{
+                        Document.COLUMN_DOCUMENT_ID,
+                        Document.COLUMN_DISPLAY_NAME,
+                        Document.COLUMN_MIME_TYPE
+                    },
+                    null, null, null)) {
+
+                if (cursor == null) {
+                    logToJS("warn", "DocumentsContract: root cursor is null");
+                    return entries;
+                }
+
+                logToJS("debug", "DocumentsContract: root cursor has " + cursor.getCount() + " items");
+
+                while (cursor.moveToNext()) {
+                    String docId = cursor.getString(0);
+                    String name = cursor.getString(1);
+                    String mimeType = cursor.getString(2);
+
+                    if (!Document.MIME_TYPE_DIR.equals(mimeType)) continue;
+                    if (name == null) continue;
+
+                    Uri dirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+                    Uri dirChildrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId);
+
+                    try (Cursor dirCursor = resolver.query(dirChildrenUri,
+                            new String[]{
+                                Document.COLUMN_DOCUMENT_ID,
+                                Document.COLUMN_DISPLAY_NAME,
+                                Document.COLUMN_LAST_MODIFIED
+                            },
+                            null, null, null)) {
+
+                        if (dirCursor != null) {
+                            while (dirCursor.moveToNext()) {
+                                String childName = dirCursor.getString(1);
+                                if ("index.md".equals(childName)) {
+                                    String indexDocId = dirCursor.getString(0);
+                                    long mtime = dirCursor.getLong(2);
+
+                                    Uri indexUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, indexDocId);
+
+                                    JSObject entry = new JSObject();
+                                    entry.put("dirname", name);
+                                    entry.put("uri", dirUri.toString());
+                                    entry.put("indexUri", indexUri.toString());
+                                    entry.put("mtime", mtime);
+
+                                    if (extractTitles) {
+                                        String title = extractTitleFromUri(indexUri);
+                                        if (title != null && !title.isEmpty()) {
+                                            entry.put("title", title);
+                                        }
+                                    }
+
+                                    entries.put(entry);
+                                    break;
+                                }
                             }
-
-                            entries.put(entry);
                         }
                     }
                 }
             }
-
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("entries", entries);
-            call.resolve(ret);
-
         } catch (Exception e) {
-            Log.e(TAG, "Error listing entries: " + e.getMessage());
-            JSObject ret = new JSObject();
-            ret.put("success", false);
-            ret.put("error", e.getMessage());
-            call.resolve(ret);
+            logToJS("error", "DocumentsContract listing failed: " + e.getMessage());
         }
+
+        return entries;
+    }
+
+    /**
+     * Fallback directory listing using DocumentFile (slower but more reliable).
+     * Works better across different Android versions and OEMs.
+     * @param extractTitles Whether to extract titles from frontmatter (slower if true)
+     */
+    private JSArray listEntriesUsingDocumentFile(Uri treeUri, boolean extractTitles) {
+        JSArray entries = new JSArray();
+
+        try {
+            DocumentFile directory = DocumentFile.fromTreeUri(getContext(), treeUri);
+            if (directory == null || !directory.exists() || !directory.isDirectory()) {
+                logToJS("error", "DocumentFile: not a valid directory");
+                return entries;
+            }
+
+            logToJS("debug", "DocumentFile: directory name = " + directory.getName());
+            DocumentFile[] children = directory.listFiles();
+            logToJS("debug", "DocumentFile: found " + (children != null ? children.length : 0) + " children");
+
+            if (children == null) return entries;
+
+            for (DocumentFile child : children) {
+                if (!child.isDirectory()) continue;
+
+                String name = child.getName();
+                if (name == null) continue;
+
+                // Look for index.md in this directory
+                DocumentFile indexFile = child.findFile("index.md");
+                if (indexFile != null && indexFile.exists()) {
+                    JSObject entry = new JSObject();
+                    entry.put("dirname", name);
+                    entry.put("uri", child.getUri().toString());
+                    entry.put("indexUri", indexFile.getUri().toString());
+                    entry.put("mtime", indexFile.lastModified());
+
+                    if (extractTitles) {
+                        String title = extractTitleFromUri(indexFile.getUri());
+                        if (title != null && !title.isEmpty()) {
+                            entry.put("title", title);
+                        }
+                    }
+
+                    entries.put(entry);
+                }
+            }
+        } catch (Exception e) {
+            logToJS("error", "DocumentFile listing failed: " + e.getMessage());
+        }
+
+        return entries;
+    }
+
+    /**
+     * Fast title extraction using URI directly (no DocumentFile overhead)
+     */
+    private String extractTitleFromUri(Uri fileUri) {
+        try {
+            ContentResolver resolver = getContext().getContentResolver();
+            try (InputStream inputStream = resolver.openInputStream(fileUri)) {
+                if (inputStream == null) return null;
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+                String line;
+                boolean inFrontmatter = false;
+                int lineCount = 0;
+
+                while ((line = reader.readLine()) != null && lineCount < 20) {
+                    lineCount++;
+                    line = line.trim();
+
+                    if (line.equals("---")) {
+                        if (!inFrontmatter) {
+                            inFrontmatter = true;
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (inFrontmatter && line.startsWith("title:")) {
+                        String title = line.substring(6).trim();
+                        if ((title.startsWith("\"") && title.endsWith("\"")) ||
+                            (title.startsWith("'") && title.endsWith("'"))) {
+                            title = title.substring(1, title.length() - 1);
+                        }
+                        return title;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logToJS("error", "Error extracting title: " + e.getMessage());
+        }
+        return null;
     }
 
     @PluginMethod
     public void readFile(PluginCall call) {
         String uriString = call.getString("uri");
-        Log.d(TAG, "readFile called with URI: " + uriString);
+        logToJS("debug", "readFile called with URI: " + uriString);
 
         if (uriString == null) {
             JSObject ret = new JSObject();
@@ -190,7 +417,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error reading file: " + e.getMessage());
+            logToJS("error", "Error reading file: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -202,7 +429,7 @@ public class FolderPickerPlugin extends Plugin {
     public void writeFile(PluginCall call) {
         String uriString = call.getString("uri");
         String content = call.getString("content");
-        Log.d(TAG, "writeFile called with URI: " + uriString);
+        logToJS("debug", "writeFile called with URI: " + uriString);
 
         if (uriString == null || content == null) {
             JSObject ret = new JSObject();
@@ -233,7 +460,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error writing file: " + e.getMessage());
+            logToJS("error", "Error writing file: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -246,7 +473,7 @@ public class FolderPickerPlugin extends Plugin {
         String baseUriString = call.getString("uri");
         String dirname = call.getString("dirname");
         String content = call.getString("content");
-        Log.d(TAG, "createEntry called - dirname: " + dirname);
+        logToJS("debug", "createEntry called - dirname: " + dirname);
 
         if (baseUriString == null || dirname == null) {
             JSObject ret = new JSObject();
@@ -326,7 +553,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error creating entry: " + e.getMessage());
+            logToJS("error", "Error creating entry: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -339,7 +566,7 @@ public class FolderPickerPlugin extends Plugin {
         String entryUriString = call.getString("entryUri");
         String base64Data = call.getString("base64Data");
         String filename = call.getString("filename");
-        Log.d(TAG, "saveImage called - filename: " + filename);
+        logToJS("debug", "saveImage called - filename: " + filename);
 
         if (entryUriString == null || base64Data == null || filename == null) {
             JSObject ret = new JSObject();
@@ -421,7 +648,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error saving image: " + e.getMessage());
+            logToJS("error", "Error saving image: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -434,7 +661,7 @@ public class FolderPickerPlugin extends Plugin {
         String entryUriString = call.getString("entryUri");
         String base64Data = call.getString("base64Data");
         String filename = call.getString("filename");
-        Log.d(TAG, "saveFile called - filename: " + filename);
+        logToJS("debug", "saveFile called - filename: " + filename);
 
         if (entryUriString == null || base64Data == null || filename == null) {
             JSObject ret = new JSObject();
@@ -525,7 +752,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error saving file: " + e.getMessage());
+            logToJS("error", "Error saving file: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -537,7 +764,7 @@ public class FolderPickerPlugin extends Plugin {
     public void readImage(PluginCall call) {
         String entryUriString = call.getString("entryUri");
         String relativePath = call.getString("relativePath");
-        Log.d(TAG, "readImage called - path: " + relativePath);
+        logToJS("debug", "readImage called - path: " + relativePath);
 
         if (entryUriString == null || relativePath == null) {
             JSObject ret = new JSObject();
@@ -616,7 +843,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error reading image: " + e.getMessage());
+            logToJS("error", "Error reading image: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -626,7 +853,7 @@ public class FolderPickerPlugin extends Plugin {
 
     @PluginMethod
     public void pickImage(PluginCall call) {
-        Log.d(TAG, "pickImage called");
+        logToJS("debug", "pickImage called");
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -635,7 +862,7 @@ public class FolderPickerPlugin extends Plugin {
 
     @ActivityCallback
     private void handlePickImageResult(PluginCall call, ActivityResult result) {
-        Log.d(TAG, "handlePickImageResult called with resultCode: " + result.getResultCode());
+        logToJS("debug", "handlePickImageResult called with resultCode: " + result.getResultCode());
 
         if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
             Uri uri = result.getData().getData();
@@ -690,7 +917,7 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(ret);
 
             } catch (Exception e) {
-                Log.e(TAG, "Error reading picked image: " + e.getMessage());
+                logToJS("error", "Error reading picked image: " + e.getMessage());
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", e.getMessage());
@@ -707,7 +934,7 @@ public class FolderPickerPlugin extends Plugin {
 
     @PluginMethod
     public void pickFile(PluginCall call) {
-        Log.d(TAG, "pickFile called");
+        logToJS("debug", "pickFile called");
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("*/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -716,7 +943,7 @@ public class FolderPickerPlugin extends Plugin {
 
     @ActivityCallback
     private void handlePickFileResult(PluginCall call, ActivityResult result) {
-        Log.d(TAG, "handlePickFileResult called with resultCode: " + result.getResultCode());
+        logToJS("debug", "handlePickFileResult called with resultCode: " + result.getResultCode());
 
         if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
             Uri uri = result.getData().getData();
@@ -775,7 +1002,7 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(ret);
 
             } catch (Exception e) {
-                Log.e(TAG, "Error reading picked file: " + e.getMessage());
+                logToJS("error", "Error reading picked file: " + e.getMessage());
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", e.getMessage());
@@ -793,7 +1020,7 @@ public class FolderPickerPlugin extends Plugin {
     @PluginMethod
     public void deleteEntry(PluginCall call) {
         String entryUriString = call.getString("entryUri");
-        Log.d(TAG, "deleteEntry called with URI: " + entryUriString);
+        logToJS("debug", "deleteEntry called with URI: " + entryUriString);
 
         if (entryUriString == null) {
             JSObject ret = new JSObject();
@@ -826,7 +1053,7 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error deleting entry: " + e.getMessage());
+            logToJS("error", "Error deleting entry: " + e.getMessage());
             JSObject ret = new JSObject();
             ret.put("success", false);
             ret.put("error", e.getMessage());
@@ -837,12 +1064,12 @@ public class FolderPickerPlugin extends Plugin {
     /**
      * Fast entry listing - returns only directory info without reading file contents.
      * Used for cache comparison to detect new/modified/deleted entries.
-     * Runs in background thread to avoid blocking UI.
+     * Uses hybrid approach: tries DocumentsContract first, falls back to DocumentFile.
      */
     @PluginMethod
     public void listEntriesFast(PluginCall call) {
         String uriString = call.getString("uri");
-        Log.d(TAG, "listEntriesFast called with URI: " + uriString);
+        logToJS("debug", "listEntriesFast called with URI: " + uriString);
 
         if (uriString == null) {
             JSObject ret = new JSObject();
@@ -852,45 +1079,23 @@ public class FolderPickerPlugin extends Plugin {
             return;
         }
 
-        // Run in background thread to avoid blocking UI
-        new Thread(() -> {
+        // Run in background thread
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        executor.submit(() -> {
             try {
                 Uri treeUri = Uri.parse(uriString);
-                DocumentFile directory = DocumentFile.fromTreeUri(getContext(), treeUri);
 
-                if (directory == null || !directory.exists()) {
-                    JSObject ret = new JSObject();
-                    ret.put("success", false);
-                    ret.put("error", "Directory not found or inaccessible");
-                    call.resolve(ret);
-                    return;
+                // Try fast DocumentsContract approach first (no title extraction)
+                logToJS("debug", "listEntriesFast: trying DocumentsContract approach");
+                JSArray entries = listEntriesUsingDocumentsContract(treeUri, false);
+
+                // If that returns no results, fallback to DocumentFile
+                if (entries == null || entries.length() == 0) {
+                    logToJS("warn", "listEntriesFast: DocumentsContract returned no entries, trying DocumentFile fallback");
+                    entries = listEntriesUsingDocumentFile(treeUri, false);
                 }
 
-                JSArray entries = new JSArray();
-                DocumentFile[] files = directory.listFiles();
-                Log.d(TAG, "listEntriesFast: found " + files.length + " items");
-
-                for (DocumentFile file : files) {
-                    // Only include directories (entry bundles)
-                    if (file.isDirectory()) {
-                        String name = file.getName();
-                        if (name != null) {
-                            // Check if it has an index.md file (quick existence check, no read)
-                            DocumentFile indexFile = file.findFile("index.md");
-                            if (indexFile != null && indexFile.exists()) {
-                                JSObject entry = new JSObject();
-                                entry.put("dirname", name);
-                                entry.put("uri", file.getUri().toString());
-                                entry.put("indexUri", indexFile.getUri().toString());
-                                entry.put("mtime", indexFile.lastModified());
-                                // NO title extraction - that's done separately in batchGetMetadata
-                                entries.put(entry);
-                            }
-                        }
-                    }
-                }
-
-                Log.d(TAG, "listEntriesFast: returning " + entries.length() + " entries");
+                logToJS("debug", "listEntriesFast: returning " + entries.length() + " entries");
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 ret.put("entries", entries);
@@ -898,24 +1103,27 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(ret);
 
             } catch (Exception e) {
-                Log.e(TAG, "Error in listEntriesFast: " + e.getMessage());
+                logToJS("error", "Error in listEntriesFast: " + e.getMessage());
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", e.getMessage());
                 call.resolve(ret);
             }
-        }).start();
+        });
+
+        // Don't block main thread - let background thread handle completion
+        executor.shutdown();
     }
 
     /**
      * Batch read metadata for multiple entries.
      * Extracts title, date, tags, and excerpt from frontmatter.
-     * Runs in background thread to avoid blocking UI.
+     * Uses parallel processing with thread pool for 4x speedup.
      */
     @PluginMethod
     public void batchGetMetadata(PluginCall call) {
         JSArray entriesArray = call.getArray("entries");
-        Log.d(TAG, "batchGetMetadata called for " + (entriesArray != null ? entriesArray.length() : 0) + " entries");
+        logToJS("debug", "batchGetMetadata called for " + (entriesArray != null ? entriesArray.length() : 0) + " entries");
 
         if (entriesArray == null || entriesArray.length() == 0) {
             JSObject ret = new JSObject();
@@ -925,43 +1133,61 @@ public class FolderPickerPlugin extends Plugin {
             return;
         }
 
-        // Capture array for use in thread
         final JSArray entries = entriesArray;
+        final int THREAD_COUNT = 4;
 
-        // Run in background thread to avoid blocking UI
+        // Run in background with parallel processing
         new Thread(() -> {
             try {
-                JSArray results = new JSArray();
+                ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
+                List<Future<JSObject>> futures = new ArrayList<>();
 
                 for (int i = 0; i < entries.length(); i++) {
+                    final int index = i;
+                    futures.add(executor.submit(() -> {
+                        try {
+                            JSONObject entryInput = entries.getJSONObject(index);
+                            String indexUri = entryInput.optString("indexUri", null);
+                            String dirname = entryInput.optString("dirname", null);
+                            String entryUri = entryInput.optString("uri", null);
+                            long mtime = entryInput.optLong("mtime", 0);
+
+                            if (indexUri == null) return null;
+
+                            Uri fileUri = Uri.parse(indexUri);
+
+                            // Extract metadata using URI directly (faster than DocumentFile)
+                            JSObject metadata = extractMetadataFromUri(fileUri);
+                            metadata.put("path", indexUri);
+                            metadata.put("dirname", dirname);
+                            metadata.put("entryUri", entryUri);
+                            metadata.put("mtime", mtime);
+
+                            return metadata;
+                        } catch (Exception e) {
+                            logToJS("warn", "Error processing entry at index " + index + ": " + e.getMessage());
+                            return null;
+                        }
+                    }));
+                }
+
+                executor.shutdown();
+                executor.awaitTermination(60, TimeUnit.SECONDS);
+
+                // Collect results
+                JSArray results = new JSArray();
+                for (Future<JSObject> future : futures) {
                     try {
-                        JSONObject entryInput = entries.getJSONObject(i);
-                        String indexUri = entryInput.optString("indexUri", null);
-                        String dirname = entryInput.optString("dirname", null);
-                        String entryUri = entryInput.optString("uri", null);
-                        long mtime = entryInput.optLong("mtime", 0);
-
-                        if (indexUri == null) continue;
-
-                        Uri fileUri = Uri.parse(indexUri);
-                        DocumentFile indexFile = DocumentFile.fromSingleUri(getContext(), fileUri);
-
-                        if (indexFile == null || !indexFile.exists()) continue;
-
-                        // Extract metadata from frontmatter
-                        JSObject metadata = extractMetadataFromFile(indexFile);
-                        metadata.put("path", indexUri);
-                        metadata.put("dirname", dirname);
-                        metadata.put("entryUri", entryUri);
-                        metadata.put("mtime", mtime);
-
-                        results.put(metadata);
+                        JSObject result = future.get();
+                        if (result != null) {
+                            results.put(result);
+                        }
                     } catch (Exception e) {
-                        Log.w(TAG, "Error processing entry at index " + i + ": " + e.getMessage());
+                        // Skip failed entries
                     }
                 }
 
-                Log.d(TAG, "batchGetMetadata: returning " + results.length() + " entries");
+                logToJS("debug", "batchGetMetadata: returning " + results.length() + " entries (parallel processing)");
                 JSObject ret = new JSObject();
                 ret.put("success", true);
                 ret.put("entries", results);
@@ -969,13 +1195,100 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(ret);
 
             } catch (Exception e) {
-                Log.e(TAG, "Error in batchGetMetadata: " + e.getMessage());
+                logToJS("error", "Error in batchGetMetadata: " + e.getMessage());
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", e.getMessage());
                 call.resolve(ret);
             }
         }).start();
+    }
+
+    /**
+     * Extract metadata from URI directly (faster than DocumentFile)
+     */
+    private JSObject extractMetadataFromUri(Uri fileUri) {
+        JSObject metadata = new JSObject();
+
+        try {
+            ContentResolver resolver = getContext().getContentResolver();
+            try (InputStream inputStream = resolver.openInputStream(fileUri)) {
+                if (inputStream == null) return metadata;
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+                StringBuilder contentBuilder = new StringBuilder();
+                String line;
+                boolean inFrontmatter = false;
+                boolean frontmatterDone = false;
+                int lineCount = 0;
+                int contentLines = 0;
+
+                String title = null;
+                String date = null;
+                JSArray tags = new JSArray();
+
+                while ((line = reader.readLine()) != null && lineCount < 50) {
+                    lineCount++;
+
+                    if (line.trim().equals("---")) {
+                        if (!inFrontmatter && lineCount <= 2) {
+                            inFrontmatter = true;
+                            continue;
+                        } else if (inFrontmatter) {
+                            inFrontmatter = false;
+                            frontmatterDone = true;
+                            continue;
+                        }
+                    }
+
+                    if (inFrontmatter) {
+                        if (line.startsWith("title:")) {
+                            title = line.substring(6).trim();
+                            if ((title.startsWith("\"") && title.endsWith("\"")) ||
+                                (title.startsWith("'") && title.endsWith("'"))) {
+                                title = title.substring(1, title.length() - 1);
+                            }
+                        } else if (line.startsWith("date:")) {
+                            date = line.substring(5).trim();
+                        } else if (line.startsWith("tags:")) {
+                            String tagsStr = line.substring(5).trim();
+                            if (tagsStr.startsWith("[") && tagsStr.endsWith("]")) {
+                                tagsStr = tagsStr.substring(1, tagsStr.length() - 1);
+                                for (String tag : tagsStr.split(",")) {
+                                    tag = tag.trim();
+                                    if (!tag.isEmpty()) {
+                                        tags.put(tag);
+                                    }
+                                }
+                            }
+                        }
+                    } else if (frontmatterDone && contentLines < 5) {
+                        String trimmed = line.trim();
+                        if (!trimmed.isEmpty()) {
+                            if (contentBuilder.length() > 0) {
+                                contentBuilder.append(" ");
+                            }
+                            contentBuilder.append(trimmed);
+                            contentLines++;
+                        }
+                    }
+                }
+
+                metadata.put("title", title != null ? title : "");
+                metadata.put("date", date != null ? date : "");
+                metadata.put("tags", tags);
+
+                String excerpt = contentBuilder.toString();
+                if (excerpt.length() > 300) {
+                    excerpt = excerpt.substring(0, 300);
+                }
+                metadata.put("excerpt", excerpt);
+            }
+        } catch (Exception e) {
+            logToJS("error", "Error extracting metadata: " + e.getMessage());
+        }
+
+        return metadata;
     }
 
     /**
@@ -1067,7 +1380,7 @@ public class FolderPickerPlugin extends Plugin {
             metadata.put("excerpt", excerpt);
 
         } catch (Exception e) {
-            Log.e(TAG, "Error extracting metadata: " + e.getMessage());
+            logToJS("error", "Error extracting metadata: " + e.getMessage());
         }
 
         return metadata;
@@ -1114,7 +1427,7 @@ public class FolderPickerPlugin extends Plugin {
             reader.close();
             inputStream.close();
         } catch (Exception e) {
-            Log.e(TAG, "Error extracting title: " + e.getMessage());
+            logToJS("error", "Error extracting title: " + e.getMessage());
         }
         return null;
     }

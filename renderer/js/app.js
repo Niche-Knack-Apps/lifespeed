@@ -88,22 +88,14 @@ class App {
      * This handles the case where a new entry is created before the cache is loaded.
      */
     async ensureCurrentEntryInSidebar() {
-        console.log('[App] ensureCurrentEntryInSidebar called');
         try {
-            if (!this.currentEntry || !this.allEntries) {
-                console.log('[App] ensureCurrentEntryInSidebar - no currentEntry or allEntries');
-                return;
-            }
-
-            console.log('[App] ensureCurrentEntryInSidebar - checking if exists, currentEntry:', this.currentEntry.dirname);
+            if (!this.currentEntry || !this.allEntries) return;
 
             // Check if current entry is already in the list
             const exists = this.allEntries.some(e =>
                 e.path === this.currentEntry.path ||
                 e.dirname === this.currentEntry.dirname
             );
-
-            console.log('[App] ensureCurrentEntryInSidebar - exists:', exists);
 
             if (!exists) {
                 console.log('[App] Adding current entry to sidebar:', this.currentEntry.dirname);
@@ -115,20 +107,12 @@ class App {
                     date: new Date().toISOString(),
                     mtime: Date.now()
                 };
-                console.log('[App] New entry object:', JSON.stringify(newEntry));
                 this.allEntries.unshift(newEntry);
                 this.renderEntriesList(this.allEntries);
 
-                // Also save to cache so it persists
-                console.log('[App] About to save to cache, metadataCache exists:', !!window.metadataCache);
+                // Save to cache so it persists
                 if (window.metadataCache) {
-                    console.log('[App] Calling saveEntry...');
                     await window.metadataCache.saveEntry(newEntry);
-                    console.log('[App] saveEntry completed');
-                    const count = await window.metadataCache.getEntryCount();
-                    console.log('[App] Cache now has', count, 'entries after ensureCurrentEntryInSidebar');
-                } else {
-                    console.warn('[App] metadataCache not available!');
                 }
             }
         } catch (error) {
@@ -1572,12 +1556,6 @@ class App {
             const currentFolder = await platform.getEntriesDir();
             console.log('[App] Current folder:', currentFolder);
 
-            // Debug: Check cache state
-            const cacheMeta = await window.metadataCache?.getMeta();
-            const cacheCount = await window.metadataCache?.getEntryCount();
-            console.log('[App] Cache meta:', cacheMeta);
-            console.log('[App] Actual cache entry count:', cacheCount);
-
             // Check if we have a cache for this specific folder
             const hasCacheForFolder = await window.metadataCache?.hasCacheForFolder(currentFolder);
             console.log('[App] Has cache for folder:', hasCacheForFolder);
@@ -2175,10 +2153,7 @@ class App {
 
                 // Save to metadata cache so it persists across restarts
                 if (window.metadataCache) {
-                    console.log('[App] Saving new entry to cache:', newEntry.path);
                     await window.metadataCache.saveEntry(newEntry);
-                    const count = await window.metadataCache.getEntryCount();
-                    console.log('[App] Cache now has', count, 'entries');
                 }
             }
 

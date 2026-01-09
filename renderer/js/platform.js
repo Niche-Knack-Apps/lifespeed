@@ -41,6 +41,20 @@ class PlatformService {
                     Keyboard: window.Capacitor.Plugins.Keyboard,
                     FolderPicker: window.Capacitor.Plugins.FolderPicker
                 };
+
+                // Set up native log bridge to forward Android logs to DebugLogger
+                if (this._capacitorPlugins.FolderPicker) {
+                    this._capacitorPlugins.FolderPicker.addListener('nativeLog', (event) => {
+                        if (window.debugLogger) {
+                            window.debugLogger.log(event.level || 'debug', event.message, {
+                                source: 'android-native',
+                                tag: event.tag,
+                                nativeTimestamp: event.timestamp
+                            });
+                        }
+                    });
+                    console.log('[Platform] Native log bridge initialized');
+                }
             } catch (e) {
                 console.warn('[Platform] Failed to load Capacitor plugins:', e);
                 this._capacitorPlugins = {};

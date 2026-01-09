@@ -192,30 +192,9 @@ class DebugLogger {
       if (this.isElectron && window.api?.saveLogFile) {
         const result = await window.api.saveLogFile(content, filename);
         return result;
-      } else if (this.isCapacitor && navigator.share && navigator.canShare) {
-        // Use Web Share API on mobile
-        const blob = new Blob([content], { type: 'text/plain' });
-        const file = new File([blob], filename, { type: 'text/plain' });
-
-        if (navigator.canShare({ files: [file] })) {
-          try {
-            await navigator.share({
-              files: [file],
-              title: 'Debug Logs',
-              text: `${this.config.appName} debug logs`
-            });
-            return { success: true, filename };
-          } catch (shareError) {
-            if (shareError.name !== 'AbortError') {
-              // Fallback to blob download
-              this._blobDownload(content, filename);
-            }
-            return { success: true, filename };
-          }
-        } else {
-          this._blobDownload(content, filename);
-          return { success: true, filename };
-        }
+      } else if (this.isCapacitor) {
+        // Use Capacitor Filesystem to save, then share
+        return await this._capacitorDownload(content, filename);
       } else {
         // Web fallback
         this._blobDownload(content, filename);
@@ -224,6 +203,57 @@ class DebugLogger {
     } catch (error) {
       this._originalConsole.error('[DebugLogger] Download failed:', error);
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Download logs on Capacitor using Filesystem plugin
+   */
+  async _capacitorDownload(content, filename) {
+    try {
+      const { Filesystem } = window.Capacitor.Plugins;
+
+      // Write to Documents directory (user-accessible)
+      const result = await Filesystem.writeFile({
+        path: filename,
+        data: content,
+        directory: 'DOCUMENTS',
+        encoding: 'utf8'
+      });
+
+      // Try to share the file
+      if (navigator.share) {
+        try {
+          // Read the file as blob for sharing
+          const fileData = await Filesystem.readFile({
+            path: filename,
+            directory: 'DOCUMENTS',
+            encoding: 'utf8'
+          });
+
+          const blob = new Blob([fileData.data], { type: 'text/plain' });
+          const file = new File([blob], filename, { type: 'text/plain' });
+
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: 'Debug Logs'
+            });
+            return { success: true, filename, shared: true };
+          }
+        } catch (shareError) {
+          // Share failed, but file was saved
+          this._originalConsole.log('[DebugLogger] Share failed, file saved to Documents:', filename);
+        }
+      }
+
+      // File saved successfully even if share didn't work
+      return { success: true, filename, path: result.uri, message: `Saved to Documents/${filename}` };
+    } catch (error) {
+      this._originalConsole.error('[DebugLogger] Capacitor download failed:', error);
+      // Try blob download as last resort
+      this._blobDownload(content, filename);
+      return { success: true, filename, fallback: true };
     }
   }
 
