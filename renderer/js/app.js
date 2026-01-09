@@ -3,6 +3,9 @@
  * Initializes all components and manages app state
  */
 
+// VERSION MARKER - if you see this in console, new code is loaded
+console.log('[App] CODE VERSION: 2026-01-09-v3-filesystem-first');
+
 class App {
     constructor() {
         this.currentEntry = null;
@@ -1603,9 +1606,12 @@ class App {
                     const elapsed = (performance.now() - startTime).toFixed(0);
                     console.log(`[App] Sidebar ready in ${elapsed}ms (from cache)`);
 
-                    // IMPORTANT: Quick check for recent entries that might be missing from cache
-                    // This catches entries created in previous sessions that weren't synced
-                    this.quickSyncRecentEntries(cachedEntries);
+                    // CRITICAL: Always verify filesystem matches cache
+                    // Filesystem is source of truth - cache is just for speed
+                    console.log('[App] Starting filesystem verification...');
+                    this.verifyFilesystemEntries().catch(err => {
+                        console.error('[App] Filesystem verification error:', err);
+                    });
                     return;
                 }
             }
@@ -1744,6 +1750,66 @@ class App {
             await this.loadEntriesListDirect();
         } finally {
             this.isIndexing = false;
+        }
+    }
+
+    /**
+     * BULLETPROOF: Verify filesystem entries match what's displayed
+     * Filesystem is the SOURCE OF TRUTH - cache is just for speed
+     * If a file exists on disk, it MUST appear in the sidebar
+     */
+    async verifyFilesystemEntries() {
+        console.log('[App] Filesystem verification starting...');
+
+        try {
+            // Get ALL entries from filesystem (the source of truth)
+            const dirList = await platform.listEntriesFast();
+            console.log('[App] Filesystem has', dirList.entries?.length || 0, 'entries');
+
+            if (!dirList.success || !dirList.entries) {
+                console.error('[App] Failed to list filesystem entries');
+                return;
+            }
+
+            // Build lookup of what's currently in sidebar
+            const sidebarPaths = new Set(this.allEntries?.map(e => e.path) || []);
+            const sidebarDirnames = new Set(this.allEntries?.map(e => e.dirname) || []);
+
+            // Find entries on disk that aren't in sidebar
+            const missingFromSidebar = dirList.entries.filter(e =>
+                !sidebarPaths.has(e.path) && !sidebarDirnames.has(e.dirname)
+            );
+
+            console.log('[App] Found', missingFromSidebar.length, 'entries on disk not in sidebar');
+
+            if (missingFromSidebar.length > 0) {
+                // Add missing entries to sidebar
+                for (const entry of missingFromSidebar) {
+                    const newEntry = {
+                        path: entry.path,
+                        dirname: entry.dirname,
+                        entryUri: entry.entryUri,
+                        title: this.extractTitleFromDirname(entry.dirname),
+                        date: this.extractDateFromDirname(entry.dirname),
+                        mtime: entry.mtime
+                    };
+                    this.allEntries.unshift(newEntry);
+
+                    // Also save to cache for next time
+                    if (window.metadataCache) {
+                        await window.metadataCache.saveEntry(newEntry);
+                    }
+                }
+
+                // Re-render sidebar with new entries
+                this.renderEntriesList(this.allEntries);
+                console.log('[App] Added', missingFromSidebar.length, 'missing entries to sidebar');
+            }
+
+            console.log('[App] Filesystem verification complete');
+
+        } catch (error) {
+            console.error('[App] Filesystem verification failed:', error);
         }
     }
 
