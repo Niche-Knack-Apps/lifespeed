@@ -898,10 +898,18 @@ class App {
                 // Update sidebar entry in-place (don't reload entire list!)
                 this.updateSidebarEntryPath(oldPath, result.path, result.dirname);
 
-                // Update cache entry (don't trigger full reload)
+                // Update cache entry - delete old, add new immediately
                 if (window.metadataCache) {
                     await window.metadataCache.deleteEntry(oldPath);
-                    // The new entry will be cached on next sync
+                    // Immediately save renamed entry to cache (don't wait for sync!)
+                    await window.metadataCache.saveEntry({
+                        path: result.path,
+                        dirname: result.dirname,
+                        entryUri: this.currentEntry.entryUri,
+                        title: newTitle,
+                        date: new Date().toISOString(),
+                        mtime: Date.now()
+                    });
                 }
 
                 console.log('[App] Entry renamed:', oldPath, '->', result.path);
