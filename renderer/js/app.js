@@ -133,10 +133,8 @@ class App {
         // Handle page unload (desktop browser close)
         window.addEventListener('beforeunload', () => {
             this.saveOrDiscardCurrentEntry();
-            // Only sync on true app close, not keyboard changes
-            if (platform.isElectron()) {
-                this.syncCacheBeforeExit();
-            }
+            // Save current entry to cache immediately (sync-ish, fast)
+            this.saveCurrentEntryToCache();
         });
 
         // Capacitor app state change - this is the TRUE app background event
@@ -144,10 +142,35 @@ class App {
             window.Capacitor.Plugins.App.addListener('appStateChange', (state) => {
                 if (!state.isActive) {
                     this.saveOrDiscardCurrentEntry();
-                    // Sync cache ONLY on true app background, with typing guard
-                    this.syncCacheBeforeExit();
+                    // Save current entry to cache (fast, reliable)
+                    this.saveCurrentEntryToCache();
                 }
             });
+        }
+    }
+
+    /**
+     * Save current entry to cache - called on quit to ensure it persists
+     * This is fast (single entry) so it completes before page unloads
+     */
+    saveCurrentEntryToCache() {
+        if (!this.currentEntry || !window.metadataCache) return;
+
+        try {
+            const entry = {
+                path: this.currentEntry.path,
+                dirname: this.currentEntry.dirname,
+                entryUri: this.currentEntry.entryUri,
+                title: this.dom.metaTitle?.value || 'Untitled',
+                date: new Date().toISOString(),
+                mtime: Date.now()
+            };
+
+            // Save to cache - this is fast enough to complete before unload
+            window.metadataCache.saveEntry(entry);
+            console.log('[App] Saved current entry to cache on exit:', entry.dirname);
+        } catch (error) {
+            console.error('[App] Failed to save entry to cache on exit:', error);
         }
     }
 
