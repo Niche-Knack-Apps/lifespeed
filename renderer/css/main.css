@@ -798,6 +798,13 @@ button {
     padding-top: var(--space-xl);
 }
 
+.finder-loading {
+    color: var(--text-muted);
+    text-align: center;
+    padding: var(--space-xl);
+    font-size: 0.9rem;
+}
+
 .finder-footer {
     display: flex;
     gap: var(--space-lg);
@@ -1218,6 +1225,22 @@ button {
 
 .context-menu-item svg {
     flex-shrink: 0;
+    opacity: 0.7;
+}
+
+.context-menu-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: var(--space-xs) 0;
+}
+
+.context-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    font-size: 0.9rem;
     opacity: 0.7;
 }
 
@@ -1765,6 +1788,17 @@ button {
 
 .btn-accordion:hover {
     opacity: 1;
+}
+
+/* Mobile: Hide formatting toolbar (use context menu instead) */
+@media (max-width: 767px) {
+    .toolbar-left {
+        display: none;
+    }
+
+    .toolbar-secondary {
+        display: none !important;
+    }
 }
 
 /* ===== Improved Preview Typography ===== */

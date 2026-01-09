@@ -73,7 +73,43 @@ class App {
         this.setupLifecycleHandlers();
 
         // Load entries list in background (don't block typing)
-        this.loadEntriesList();
+        // Then ensure newly created entry is visible in sidebar
+        this.loadEntriesList().then(() => {
+            this.ensureCurrentEntryInSidebar();
+        });
+    }
+
+    /**
+     * Ensure the current entry appears in the sidebar after entries list loads.
+     * This handles the case where a new entry is created before the cache is loaded.
+     */
+    ensureCurrentEntryInSidebar() {
+        if (!this.currentEntry || !this.allEntries) return;
+
+        // Check if current entry is already in the list
+        const exists = this.allEntries.some(e =>
+            e.path === this.currentEntry.path ||
+            e.dirname === this.currentEntry.dirname
+        );
+
+        if (!exists) {
+            console.log('[App] Adding current entry to sidebar:', this.currentEntry.dirname);
+            const newEntry = {
+                path: this.currentEntry.path,
+                dirname: this.currentEntry.dirname,
+                entryUri: this.currentEntry.entryUri,
+                title: 'New Entry',
+                date: new Date().toISOString(),
+                mtime: Date.now()
+            };
+            this.allEntries.unshift(newEntry);
+            this.renderEntriesList(this.allEntries);
+
+            // Also save to cache so it persists
+            if (window.metadataCache) {
+                window.metadataCache.saveEntry(newEntry);
+            }
+        }
     }
 
     setupLifecycleHandlers() {
@@ -181,7 +217,7 @@ class App {
             metaTags: document.getElementById('meta-tags'),
             metaDate: document.getElementById('meta-date'),
 
-            // Toolbar - Primary row
+            // Toolbar - Primary row (Desktop)
             toolbarLeft: document.getElementById('toolbar-left'),
             btnBold: document.getElementById('btn-bold'),
             btnItalic: document.getElementById('btn-italic'),
@@ -235,6 +271,10 @@ class App {
             contextMenu: document.getElementById('insert-context-menu'),
             contextMenuInsertImage: document.getElementById('context-insert-image'),
             contextMenuInsertFile: document.getElementById('context-insert-file'),
+            contextMenuBold: document.getElementById('context-bold'),
+            contextMenuItalic: document.getElementById('context-italic'),
+            contextMenuHeading: document.getElementById('context-heading'),
+            contextMenuList: document.getElementById('context-list'),
 
             // Debug logs
             debugLogStats: document.getElementById('debug-log-stats'),
@@ -420,6 +460,24 @@ class App {
         // Setup context menu button handlers
         this.dom.contextMenuInsertImage?.addEventListener('click', () => this.pickAndInsertImage());
         this.dom.contextMenuInsertFile?.addEventListener('click', () => this.pickAndInsertFile());
+
+        // Context menu formatting tools
+        this.dom.contextMenuBold?.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.wrapSelection('**');
+        });
+        this.dom.contextMenuItalic?.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.wrapSelection('*');
+        });
+        this.dom.contextMenuHeading?.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.prefixLine('## ');
+        });
+        this.dom.contextMenuList?.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.prefixLine('- ');
+        });
     }
 
     showContextMenu(x, y) {
@@ -646,24 +704,37 @@ class App {
     }
 
     async insertImage(file) {
-        if (!this.currentEntry) return;
+        if (!this.currentEntry) {
+            console.warn('[App] insertImage: No current entry');
+            return;
+        }
+
+        console.log('[App] insertImage: Starting', { fileName: file?.name, fileType: file?.type, hasEntryUri: !!this.currentEntry?.entryUri });
 
         try {
             // Convert to base64
+            console.log('[App] insertImage: Converting to base64...');
             const base64 = await this._fileToBase64(file);
+            console.log('[App] insertImage: Base64 ready, length:', base64?.length);
+
             // Pass the full currentEntry object so SAF can use entryUri
+            console.log('[App] insertImage: Calling platform.pasteImage...');
             const result = await platform.pasteImage(base64, this.currentEntry);
+            console.log('[App] insertImage: pasteImage result:', { success: result?.success, markdown: result?.markdown, error: result?.error });
 
             if (result.success) {
-                this.insertTextInCurrentMode(result.markdown + '\n');
+                console.log('[App] insertImage: Inserting markdown into editor...');
+                await this.insertTextInCurrentMode(result.markdown + '\n');
+                console.log('[App] insertImage: Scheduling auto-save...');
                 this.scheduleAutoSave();
+                console.log('[App] insertImage: Complete');
                 platform.showToast('Image inserted');
             } else {
                 console.error('[App] Failed to insert image:', result.error);
                 platform.showToast('Failed to insert image');
             }
         } catch (error) {
-            console.error('[App] Error inserting image:', error);
+            console.error('[App] Error inserting image:', error, error?.stack);
             platform.showToast('Failed to insert image');
         }
     }
@@ -858,8 +929,8 @@ class App {
 
     initToolbar() {
         // Primary row - formatting buttons
-        this.dom.btnBold.addEventListener('click', () => this.wrapSelection('**'));
-        this.dom.btnItalic.addEventListener('click', () => this.wrapSelection('*'));
+        this.dom.btnBold?.addEventListener('click', () => this.wrapSelection('**'));
+        this.dom.btnItalic?.addEventListener('click', () => this.wrapSelection('*'));
         this.dom.btnStrikethrough?.addEventListener('click', () => this.wrapSelection('~~'));
         this.dom.btnCode?.addEventListener('click', () => this.wrapSelection('`'));
         this.dom.btnLink?.addEventListener('click', () => this.insertLink());
@@ -1544,7 +1615,7 @@ class App {
 
         try {
             // Clear existing cache since we're rebuilding for this folder
-            await window.metadataCache?.clearAll();
+            await window.metadataCache?.clearEntries();
 
             // Get fast directory listing (no file reads)
             const dirList = await platform.listEntriesFast();
@@ -1567,8 +1638,12 @@ class App {
             this.showIndexingProgress(0, `Building index - this is a one-time operation`);
             this.updateIndexingStatus(`Found ${total} entries`);
 
-            const BATCH_SIZE = 50; // Process 50 entries at a time
+            // Larger batch size for faster processing (fewer native calls)
+            const BATCH_SIZE = 100;
+            // Show preview after this many entries
+            const PREVIEW_THRESHOLD = 50;
             const allMetadata = [];
+            let previewShown = false;
 
             for (let i = 0; i < total; i += BATCH_SIZE) {
                 const batch = dirList.entries.slice(i, i + BATCH_SIZE);
@@ -1582,6 +1657,14 @@ class App {
 
                     // Save batch to cache immediately
                     await window.metadataCache?.saveEntries(result.entries);
+
+                    // Show preview of entries after first batch (so user sees something early)
+                    if (!previewShown && allMetadata.length >= PREVIEW_THRESHOLD) {
+                        previewShown = true;
+                        this.allEntries = [...allMetadata];
+                        this.renderEntriesList(this.allEntries);
+                        console.log('[App] Showing preview with', allMetadata.length, 'entries');
+                    }
                 }
 
                 // Update progress
@@ -1589,8 +1672,12 @@ class App {
                 this.showIndexingProgress(progress, `Indexing entries...`);
                 this.updateIndexingStatus(`${batchEnd} of ${total} entries`);
 
-                // Yield to UI to keep it responsive
-                await new Promise(r => setTimeout(r, 0));
+                // Yield to UI to keep it responsive (longer yield every 500 entries)
+                if (batchEnd % 500 === 0) {
+                    await new Promise(r => setTimeout(r, 10));
+                } else {
+                    await new Promise(r => setTimeout(r, 0));
+                }
             }
 
             // Update cache metadata WITH folder path
@@ -2047,47 +2134,99 @@ class App {
         this.finderResults = [];
         this.finderEntries = [];
         this.fuse = null;
+        this.finderDebounceTimer = null;
+        this.finderIndexing = false;
 
-        this.dom.finderInput.addEventListener('input', () => this.onFinderInput());
+        this.dom.finderInput.addEventListener('input', () => this.onFinderInputDebounced());
         this.dom.finderInput.addEventListener('keydown', (e) => this.onFinderKeydown(e));
     }
 
+    /**
+     * Debounced search input handler - prevents hammering search on every keystroke
+     * Critical for Android performance with large directories
+     */
+    onFinderInputDebounced() {
+        // Clear any pending search
+        if (this.finderDebounceTimer) {
+            clearTimeout(this.finderDebounceTimer);
+        }
+
+        // Debounce: wait 150ms after last keystroke before searching
+        this.finderDebounceTimer = setTimeout(() => {
+            this.onFinderInput();
+        }, 150);
+    }
+
     async initFinderIndex() {
+        if (this.finderIndexing) {
+            console.log('[Finder] Already indexing, skipping');
+            return;
+        }
+
+        this.finderIndexing = true;
         console.log('[Finder] Building search index...');
         const startTime = performance.now();
 
-        // Build searchable entries list
-        const result = await platform.listEntries();
-        console.log('[Finder] listEntries result:', { success: result.success, count: result.entries?.length });
-        if (!result.success) return;
+        // Use cached entries from sidebar (already loaded on app init)
+        // This is MUCH faster than calling platform.listEntries() which makes fresh native calls
+        let sourceEntries = this.allEntries;
+
+        // If sidebar entries not loaded yet, try metadata cache directly
+        if (!sourceEntries || sourceEntries.length === 0) {
+            console.log('[Finder] No sidebar entries, checking metadata cache...');
+            if (window.metadataCache) {
+                // Ensure cache is initialized
+                if (!window.metadataCache.initialized) {
+                    await window.metadataCache.init();
+                }
+                sourceEntries = await window.metadataCache.getAllEntries();
+            }
+        }
+
+        // Last resort: fall back to platform.listEntries() (slow on Android)
+        if (!sourceEntries || sourceEntries.length === 0) {
+            console.log('[Finder] No cache available, falling back to platform.listEntries()');
+            try {
+                const result = await platform.listEntries();
+                console.log('[Finder] listEntries result:', { success: result.success, count: result.entries?.length });
+                if (result.success && result.entries) {
+                    sourceEntries = result.entries;
+                }
+            } catch (error) {
+                console.error('[Finder] listEntries failed:', error);
+            }
+        }
+
+        // If still no entries, show empty state
+        if (!sourceEntries || sourceEntries.length === 0) {
+            console.log('[Finder] No entries found');
+            this.finderIndexing = false;
+            return;
+        }
+
+        console.log('[Finder] Using', sourceEntries.length, 'entries');
 
         this.finderEntries = [];
 
-        for (const entry of result.entries) {
-            // Use frontmatter title from entry, or fall back to dirname
+        for (const entry of sourceEntries) {
+            // Use cached title or derive from dirname
             let title = entry.title;
             if (!title) {
-                const titleMatch = entry.dirname.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
-                title = titleMatch ? titleMatch[1].replace(/-/g, ' ') : entry.dirname;
+                const titleMatch = entry.dirname?.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
+                title = titleMatch ? titleMatch[1].replace(/-/g, ' ') : (entry.dirname || 'Untitled');
             }
-            const dateMatch = entry.dirname.match(/^(\d{4}-\d{2}-\d{2})/);
-            const date = dateMatch ? dateMatch[1] : '';
 
-            // Try to load content for better search
-            let content = '';
-            let tags = [];
-            try {
-                const loadResult = await platform.loadEntry(entry.path);
-                if (loadResult.success) {
-                    const parsed = frontmatter.parse(loadResult.content);
-                    content = parsed.body.substring(0, 500);
-                    tags = parsed.data.tags || [];
-                    // Use parsed title if we don't have one yet
-                    if (!title && parsed.data.title) {
-                        title = parsed.data.title;
-                    }
-                }
-            } catch (e) {}
+            // Use cached date or extract from dirname
+            let date = entry.date;
+            if (!date && entry.dirname) {
+                const dateMatch = entry.dirname.match(/^(\d{4}-\d{2}-\d{2})/);
+                date = dateMatch ? dateMatch[1] : '';
+            }
+
+            // Use cached excerpt as content (already trimmed to 300 chars)
+            // and cached tags - no need to load and parse files again
+            const content = entry.excerpt || '';
+            const tags = entry.tags || [];
 
             this.finderEntries.push({
                 path: entry.path,
@@ -2114,7 +2253,7 @@ class App {
                 includeScore: true,
                 includeMatches: true
             });
-            console.log('[Finder] Fuse.js initialized');
+            console.log('[Finder] Fuse.js initialized with', this.finderEntries.length, 'entries');
         } else {
             console.log('[Finder] Fuse.js not available, using fallback search');
         }
@@ -2122,6 +2261,8 @@ class App {
         const elapsed = (performance.now() - startTime).toFixed(0);
         console.log(`[Finder] Index built: ${this.finderEntries.length} entries in ${elapsed}ms`);
         console.log('[Finder] Sample entries:', this.finderEntries.slice(0, 3).map(e => ({ title: e.title, date: e.date, tagsCount: e.tags?.length, contentLen: e.content?.length })));
+
+        this.finderIndexing = false;
     }
 
     async openFinder() {
@@ -2130,8 +2271,12 @@ class App {
         this.dom.finderInput.focus();
         this.finderSelectedIndex = 0;
 
-        // Build index if needed
-        if (this.finderEntries.length === 0) {
+        // Build index if needed (with loading state)
+        if (this.finderEntries.length === 0 && !this.finderIndexing) {
+            // Show loading message
+            this.dom.finderResultsList.innerHTML = '<div class="finder-loading">Loading entries...</div>';
+            this.dom.finderPreviewContent.innerHTML = '';
+
             await this.initFinderIndex();
         }
 
@@ -2187,6 +2332,16 @@ class App {
 
     renderFinderResults() {
         this.dom.finderResultsList.innerHTML = '';
+
+        // Show message if no entries to display
+        if (!this.finderResults || this.finderResults.length === 0) {
+            const message = this.finderEntries.length === 0
+                ? 'No entries available. Try creating a new entry first.'
+                : 'No matching entries found.';
+            this.dom.finderResultsList.innerHTML = `<div class="finder-loading">${message}</div>`;
+            this.dom.finderPreviewContent.innerHTML = '';
+            return;
+        }
 
         this.finderResults.forEach((entry, index) => {
             const item = document.createElement('div');
