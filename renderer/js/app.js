@@ -74,8 +74,12 @@ class App {
 
         // Load entries list in background (don't block typing)
         // Then ensure newly created entry is visible in sidebar
-        this.loadEntriesList().then(() => {
-            this.ensureCurrentEntryInSidebar();
+        this.loadEntriesList().then(async () => {
+            console.log('[App] loadEntriesList completed, calling ensureCurrentEntryInSidebar');
+            await this.ensureCurrentEntryInSidebar();
+            console.log('[App] ensureCurrentEntryInSidebar completed');
+        }).catch(err => {
+            console.error('[App] Error in loadEntriesList chain:', err);
         });
     }
 
@@ -83,32 +87,52 @@ class App {
      * Ensure the current entry appears in the sidebar after entries list loads.
      * This handles the case where a new entry is created before the cache is loaded.
      */
-    ensureCurrentEntryInSidebar() {
-        if (!this.currentEntry || !this.allEntries) return;
-
-        // Check if current entry is already in the list
-        const exists = this.allEntries.some(e =>
-            e.path === this.currentEntry.path ||
-            e.dirname === this.currentEntry.dirname
-        );
-
-        if (!exists) {
-            console.log('[App] Adding current entry to sidebar:', this.currentEntry.dirname);
-            const newEntry = {
-                path: this.currentEntry.path,
-                dirname: this.currentEntry.dirname,
-                entryUri: this.currentEntry.entryUri,
-                title: 'New Entry',
-                date: new Date().toISOString(),
-                mtime: Date.now()
-            };
-            this.allEntries.unshift(newEntry);
-            this.renderEntriesList(this.allEntries);
-
-            // Also save to cache so it persists
-            if (window.metadataCache) {
-                window.metadataCache.saveEntry(newEntry);
+    async ensureCurrentEntryInSidebar() {
+        console.log('[App] ensureCurrentEntryInSidebar called');
+        try {
+            if (!this.currentEntry || !this.allEntries) {
+                console.log('[App] ensureCurrentEntryInSidebar - no currentEntry or allEntries');
+                return;
             }
+
+            console.log('[App] ensureCurrentEntryInSidebar - checking if exists, currentEntry:', this.currentEntry.dirname);
+
+            // Check if current entry is already in the list
+            const exists = this.allEntries.some(e =>
+                e.path === this.currentEntry.path ||
+                e.dirname === this.currentEntry.dirname
+            );
+
+            console.log('[App] ensureCurrentEntryInSidebar - exists:', exists);
+
+            if (!exists) {
+                console.log('[App] Adding current entry to sidebar:', this.currentEntry.dirname);
+                const newEntry = {
+                    path: this.currentEntry.path,
+                    dirname: this.currentEntry.dirname,
+                    entryUri: this.currentEntry.entryUri,
+                    title: 'New Entry',
+                    date: new Date().toISOString(),
+                    mtime: Date.now()
+                };
+                console.log('[App] New entry object:', JSON.stringify(newEntry));
+                this.allEntries.unshift(newEntry);
+                this.renderEntriesList(this.allEntries);
+
+                // Also save to cache so it persists
+                console.log('[App] About to save to cache, metadataCache exists:', !!window.metadataCache);
+                if (window.metadataCache) {
+                    console.log('[App] Calling saveEntry...');
+                    await window.metadataCache.saveEntry(newEntry);
+                    console.log('[App] saveEntry completed');
+                    const count = await window.metadataCache.getEntryCount();
+                    console.log('[App] Cache now has', count, 'entries after ensureCurrentEntryInSidebar');
+                } else {
+                    console.warn('[App] metadataCache not available!');
+                }
+            }
+        } catch (error) {
+            console.error('[App] ensureCurrentEntryInSidebar error:', error);
         }
     }
 
@@ -1548,6 +1572,12 @@ class App {
             const currentFolder = await platform.getEntriesDir();
             console.log('[App] Current folder:', currentFolder);
 
+            // Debug: Check cache state
+            const cacheMeta = await window.metadataCache?.getMeta();
+            const cacheCount = await window.metadataCache?.getEntryCount();
+            console.log('[App] Cache meta:', cacheMeta);
+            console.log('[App] Actual cache entry count:', cacheCount);
+
             // Check if we have a cache for this specific folder
             const hasCacheForFolder = await window.metadataCache?.hasCacheForFolder(currentFolder);
             console.log('[App] Has cache for folder:', hasCacheForFolder);
@@ -1563,6 +1593,10 @@ class App {
 
                     const elapsed = (performance.now() - startTime).toFixed(0);
                     console.log(`[App] Sidebar ready in ${elapsed}ms (from cache)`);
+
+                    // IMPORTANT: Quick check for recent entries that might be missing from cache
+                    // This catches entries created in previous sessions that weren't synced
+                    this.quickSyncRecentEntries(cachedEntries);
                     return;
                 }
             }
@@ -1705,6 +1739,81 @@ class App {
     }
 
     /**
+     * Quick sync to catch recent entries missing from cache
+     * Runs in background after cache is loaded - doesn't block UI
+     * Only checks filesystem entries, doesn't re-read content
+     */
+    async quickSyncRecentEntries(cachedEntries) {
+        try {
+            console.log('[App] Quick sync - checking for missing recent entries...');
+
+            // Get filesystem listing (fast - just paths and mtimes)
+            const dirList = await platform.listEntriesFast();
+            if (!dirList.success || !dirList.entries) return;
+
+            // Build set of cached paths for fast lookup
+            const cachedPaths = new Set(cachedEntries.map(e => e.path));
+            const cachedDirnames = new Set(cachedEntries.map(e => e.dirname));
+
+            // Find entries on disk that aren't in cache
+            const missing = dirList.entries.filter(e =>
+                !cachedPaths.has(e.path) && !cachedDirnames.has(e.dirname)
+            );
+
+            if (missing.length === 0) {
+                console.log('[App] Quick sync - no missing entries');
+                return;
+            }
+
+            console.log('[App] Quick sync - found', missing.length, 'missing entries, adding to sidebar');
+
+            // Add missing entries to allEntries and cache
+            for (const entry of missing) {
+                const newEntry = {
+                    path: entry.path,
+                    dirname: entry.dirname,
+                    entryUri: entry.entryUri,
+                    title: this.extractTitleFromDirname(entry.dirname),
+                    date: this.extractDateFromDirname(entry.dirname),
+                    mtime: entry.mtime
+                };
+
+                this.allEntries.unshift(newEntry);
+
+                // Save to cache
+                if (window.metadataCache) {
+                    await window.metadataCache.saveEntry(newEntry);
+                }
+            }
+
+            // Re-render with the new entries
+            this.renderEntriesList(this.allEntries);
+            console.log('[App] Quick sync - added', missing.length, 'entries, total now:', this.allEntries.length);
+
+        } catch (error) {
+            console.error('[App] Quick sync error:', error);
+        }
+    }
+
+    /**
+     * Extract title from dirname (e.g., "2026-01-09-hello-world" -> "hello world")
+     */
+    extractTitleFromDirname(dirname) {
+        if (!dirname) return 'Untitled';
+        const match = dirname.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
+        return match ? match[1].replace(/-/g, ' ') : dirname;
+    }
+
+    /**
+     * Extract date from dirname (e.g., "2026-01-09-hello" -> "2026-01-09")
+     */
+    extractDateFromDirname(dirname) {
+        if (!dirname) return new Date().toISOString();
+        const match = dirname.match(/^(\d{4}-\d{2}-\d{2})/);
+        return match ? match[1] : new Date().toISOString();
+    }
+
+    /**
      * Background sync to detect new/modified/deleted entries
      */
     async syncEntriesInBackground() {
@@ -1713,6 +1822,7 @@ class App {
         try {
             // Get current filesystem state
             const dirList = await platform.listEntriesFast();
+            console.log('[App] Sync - filesystem has', dirList.entries?.length || 0, 'entries');
             if (!dirList.success) return;
 
             // Compare with cache
@@ -1723,10 +1833,12 @@ class App {
             if (!changes) return;
 
             const { added, modified, deleted } = changes;
+            console.log('[App] Sync changes - added:', added.length, 'modified:', modified.length, 'deleted:', deleted.length);
 
             // Handle deleted entries
             if (deleted.length > 0) {
                 console.log('[App] Removing', deleted.length, 'deleted entries from cache');
+                console.log('[App] First 3 deleted paths:', deleted.slice(0, 3));
                 await window.metadataCache?.deleteEntries(deleted);
             }
 
@@ -2063,7 +2175,10 @@ class App {
 
                 // Save to metadata cache so it persists across restarts
                 if (window.metadataCache) {
-                    window.metadataCache.saveEntry(newEntry);
+                    console.log('[App] Saving new entry to cache:', newEntry.path);
+                    await window.metadataCache.saveEntry(newEntry);
+                    const count = await window.metadataCache.getEntryCount();
+                    console.log('[App] Cache now has', count, 'entries');
                 }
             }
 
