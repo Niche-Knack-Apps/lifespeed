@@ -2060,6 +2060,11 @@ class App {
                 };
                 this.allEntries.unshift(newEntry);
                 this.renderEntriesList(this.allEntries);
+
+                // Save to metadata cache so it persists across restarts
+                if (window.metadataCache) {
+                    window.metadataCache.saveEntry(newEntry);
+                }
             }
 
             // Focus current editor

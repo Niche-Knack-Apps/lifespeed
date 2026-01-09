@@ -85,7 +85,12 @@ class MetadataCache {
             request.onsuccess = () => {
                 const entries = request.result || [];
                 // Sort by mtime descending (newest first)
-                entries.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+                // Handle both numeric timestamps and ISO strings
+                entries.sort((a, b) => {
+                    const mtimeA = typeof a.mtime === 'string' ? new Date(a.mtime).getTime() : (a.mtime || 0);
+                    const mtimeB = typeof b.mtime === 'string' ? new Date(b.mtime).getTime() : (b.mtime || 0);
+                    return mtimeB - mtimeA;
+                });
                 resolve(entries);
             };
 
@@ -316,6 +321,16 @@ class MetadataCache {
     }
 
     /**
+     * Normalize mtime to numeric timestamp
+     */
+    _normalizeMtime(mtime) {
+        if (typeof mtime === 'string') {
+            return new Date(mtime).getTime();
+        }
+        return mtime || 0;
+    }
+
+    /**
      * Compare current filesystem state with cache to find changes
      * @param {Array} currentEntries - Array of { path, mtime } from filesystem
      * @returns {Object} { added: [], modified: [], deleted: [] }
@@ -333,8 +348,13 @@ class MetadataCache {
 
             if (!cachedMap.has(entry.path)) {
                 added.push(entry);
-            } else if (cachedMap.get(entry.path) !== entry.mtime) {
-                modified.push(entry);
+            } else {
+                // Normalize both mtimes for comparison (handle string vs number)
+                const cachedMtime = this._normalizeMtime(cachedMap.get(entry.path));
+                const currentMtime = this._normalizeMtime(entry.mtime);
+                if (cachedMtime !== currentMtime) {
+                    modified.push(entry);
+                }
             }
         }
 
