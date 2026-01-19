@@ -17,6 +17,7 @@ class App {
         this.lastSavedContent = ''; // Track what was last saved
         this.lastInputTime = 0; // Track last typing time to prevent sync during active editing
         this.isSyncingCache = false; // Prevent concurrent syncs
+        this.scrollSync = null; // Endemic scroll sync controller
 
         // DOM references (cached for speed)
         this.dom = {};
@@ -224,7 +225,7 @@ class App {
         } else {
             // Discard empty entry
             console.log('[App] Discarding empty entry:', this.currentEntry.path);
-            await platform.deleteEntry(this.currentEntry.path);
+            await platform.deleteEntry(this.currentEntry.path, this.currentEntry.entryUri);
         }
     }
 
@@ -402,6 +403,14 @@ class App {
         // Make preview EDITABLE (WYSIWYG mode)
         this.dom.preview.setAttribute('contenteditable', 'true');
         this.dom.preview.addEventListener('input', () => {
+            if (this.isRendering) {
+                console.log('[App] Skipping sync - still rendering');
+                return;
+            }
+            if (this.isCheckboxToggle) {
+                console.log('[App] Skipping sync - checkbox toggle handled separately');
+                return;
+            }
             this.lastInputTime = Date.now(); // Track for sync guard
             this.syncPreviewToSource();
             this.scheduleAutoSave();
@@ -416,6 +425,13 @@ class App {
 
         // Tap-and-hold for insert menu (mobile) - on both editors
         this.initContextMenu();
+
+        // Initialize endemic scroll sync controller
+        if (typeof ScrollSyncController !== 'undefined') {
+            this.scrollSync = new ScrollSyncController(this.dom.editor, this.dom.preview);
+            this.scrollSync.init();
+            console.log('[App] ScrollSyncController initialized');
+        }
 
         // Start in PREVIEW mode for WYSIWYG editing
         this.setMode('preview');
@@ -838,13 +854,17 @@ class App {
         if (!this.currentEntry) return;
 
         try {
-            // Sync preview to source if in preview mode
-            if (this.currentMode === 'preview') {
-                this.syncPreviewToSource();
-            }
+            // NOTE: We do NOT sync preview to source here anymore.
+            // The editor is kept in sync by the input event handler during editing.
+            // Syncing here would corrupt checkbox states on notes that weren't edited.
 
             // Update content from editor
             const content = this.dom.editor.value;
+
+            // Debug: Log checkbox count being saved
+            const checkedCount = (content.match(/- \[x\]/gi) || []).length;
+            const uncheckedCount = (content.match(/- \[ \]/g) || []).length;
+            console.log(`[App] Saving - checkbox count: checked=${checkedCount}, unchecked=${uncheckedCount}`);
             const newTitle = this.dom.metaTitle.value.trim();
 
             // Update frontmatter with metadata fields
@@ -1162,6 +1182,10 @@ class App {
     }
 
     async setMode(mode) {
+        // Capture scroll position BEFORE switching (from current mode)
+        const previousMode = this.currentMode;
+        const scrollPosition = this.scrollSync?.capturePosition(previousMode);
+
         this.currentMode = mode;
         this.dom.btnSource.classList.toggle('active', mode === 'source');
         this.dom.btnPreview.classList.toggle('active', mode === 'preview');
@@ -1180,13 +1204,30 @@ class App {
             await this.renderPreview();
             this.dom.editor.classList.add('hidden');
             this.dom.preview.classList.remove('hidden');
-            this.dom.preview.focus();
+
+            // Apply scroll after DOM settles using anchor-based sync
+            // Use longer delay (150ms) to ensure element is fully visible and has dimensions
+            setTimeout(() => {
+                if (this.scrollSync && scrollPosition) {
+                    this.scrollSync.restorePosition(scrollPosition, 'preview');
+                }
+                // Focus AFTER scroll restoration to avoid Android WebView scroll reset
+                // Delay focus to ensure scroll has settled
+                setTimeout(() => {
+                    this.dom.preview.focus({ preventScroll: true });
+                }, 200);
+            }, 150);
         } else {
-            // Sync preview to source before switching
-            this.syncPreviewToSource();
             this.dom.editor.classList.remove('hidden');
             this.dom.preview.classList.add('hidden');
-            this.dom.editor.focus();
+
+            // Apply scroll after DOM settles
+            setTimeout(() => {
+                this.dom.editor.focus({ preventScroll: true });
+                if (this.scrollSync && scrollPosition) {
+                    this.scrollSync.restorePosition(scrollPosition, 'source');
+                }
+            }, 100);
         }
     }
 
@@ -1212,8 +1253,9 @@ class App {
         return this.processNode(temp).trim();
     }
 
-    processNode(node) {
+    processNode(node, indentLevel = 0) {
         let result = '';
+        const indent = '    '.repeat(indentLevel); // 4 spaces per level
 
         for (const child of node.childNodes) {
             if (child.nodeType === Node.TEXT_NODE) {
@@ -1277,18 +1319,44 @@ class App {
                         break;
                     case 'ul':
                     case 'ol':
-                        result += this.processNode(child) + '\n';
+                        // Process list children with same indent level (li will add its own indent)
+                        result += this.processNode(child, indentLevel) + '\n';
                         break;
                     case 'li':
-                        // Check if this is a task list item with a checkbox
-                        const checkbox = child.querySelector('input[type="checkbox"]');
+                        // Get text content, checkbox, and nested lists from direct children only
+                        let textContent = '';
+                        let nestedList = null;
+                        let checkbox = null;
+                        for (const liChild of child.childNodes) {
+                            if (liChild.nodeType === Node.TEXT_NODE) {
+                                textContent += liChild.textContent;
+                            } else if (liChild.nodeType === Node.ELEMENT_NODE) {
+                                const liChildTag = liChild.tagName.toLowerCase();
+                                if (liChildTag === 'ul' || liChildTag === 'ol') {
+                                    nestedList = liChild;
+                                } else if (liChildTag === 'input' && liChild.type === 'checkbox') {
+                                    // Direct child checkbox only
+                                    checkbox = liChild;
+                                } else if (liChildTag !== 'input') {
+                                    // Process inline elements (strong, em, a, etc.)
+                                    textContent += this.processNode(liChild, 0);
+                                }
+                            }
+                        }
+                        textContent = textContent.trim();
+
                         if (checkbox) {
-                            const checked = checkbox.checked ? 'x' : ' ';
-                            // Get content after checkbox
-                            const content = this.processNode(child).trim();
-                            result += `- [${checked}] ${content}\n`;
+                            // Check both property and attribute for robustness
+                            const isChecked = checkbox.checked || checkbox.hasAttribute('checked');
+                            const checked = isChecked ? 'x' : ' ';
+                            result += `${indent}- [${checked}] ${textContent}\n`;
                         } else {
-                            result += '- ' + this.processNode(child).trim() + '\n';
+                            result += `${indent}- ${textContent}\n`;
+                        }
+
+                        // Process nested list with increased indentation
+                        if (nestedList) {
+                            result += this.processNode(nestedList, indentLevel + 1);
                         }
                         break;
                     case 'input':
@@ -1316,52 +1384,89 @@ class App {
     }
 
     async renderPreview() {
-        const content = this.dom.editor.value;
-        const parsed = frontmatter.parse(content);
+        this.isRendering = true; // Guard to prevent sync during render
+        try {
+            const content = this.dom.editor.value;
+            const parsed = frontmatter.parse(content);
 
-        // Use marked.js if available, otherwise simple fallback
-        if (typeof marked !== 'undefined') {
-            // Configure marked for extended GFM features (only once)
-            if (!this._markedConfigured) {
-                marked.setOptions({
-                    gfm: true,           // GitHub Flavored Markdown
-                    breaks: true,        // Line breaks as <br>
-                    headerIds: true,     // IDs on headers for linking
-                    mangle: false        // Don't escape email addresses
-                });
+            // Use markdown-it if available, otherwise simple fallback
+            if (typeof markdownit !== 'undefined') {
+                // Initialize markdown-it once
+                if (!this._md) {
+                    this._md = markdownit({
+                        html: true,          // Allow HTML in source
+                        breaks: true,        // Convert \n to <br>
+                        linkify: true,       // Auto-convert URLs to links
+                        typographer: false   // Don't replace quotes with smart quotes
+                    });
 
-
-                // Override checkbox to make it interactive (remove disabled attribute)
-                marked.use({
-                    renderer: {
-                        checkbox(token) {
-                            return `<input type="checkbox"${token.checked ? ' checked' : ''}>`;
-                        }
+                    // Add footnote support
+                    if (typeof markdownitFootnote !== 'undefined') {
+                        this._md.use(markdownitFootnote);
                     }
-                });
 
-                // Register footnotes extension if available
-                if (typeof markedFootnote !== 'undefined') {
-                    marked.use(markedFootnote());
+                    // Add source line tracking for scroll sync
+                    if (typeof markdownItSourceLines !== 'undefined') {
+                        this._md.use(markdownItSourceLines);
+                        console.log('[App] markdownItSourceLines plugin registered');
+                    }
+
+                    // Enable task lists (GFM style checkboxes)
+                    // Override list item rendering to handle [ ] and [x]
+                    const defaultListItemRender = this._md.renderer.rules.list_item_open ||
+                        function(tokens, idx, options, env, self) {
+                            return self.renderToken(tokens, idx, options);
+                        };
+
+                    this._md.renderer.rules.list_item_open = function(tokens, idx, options, env, self) {
+                        // Check if the next token contains a checkbox
+                        const nextToken = tokens[idx + 2]; // list_item_open -> paragraph_open -> inline
+                        if (nextToken && nextToken.content) {
+                            const match = nextToken.content.match(/^\[([ xX])\]\s*/);
+                            if (match) {
+                                const checked = match[1].toLowerCase() === 'x';
+                                // Remove the checkbox syntax from the content
+                                nextToken.content = nextToken.content.replace(/^\[([ xX])\]\s*/, '');
+                                nextToken.children[0].content = nextToken.children[0].content.replace(/^\[([ xX])\]\s*/, '');
+                                // Add checkbox HTML to the list item
+                                const token = tokens[idx];
+                                const lineAttr = token.map ? ` data-source-line="${token.map[0] + 1}"` : '';
+                                return `<li${lineAttr} class="task-list-item"><input type="checkbox"${checked ? ' checked' : ''}> `;
+                            }
+                        }
+                        return defaultListItemRender(tokens, idx, options, env, self);
+                    };
+
+                    console.log('[App] markdown-it initialized with plugins');
                 }
 
-                this._markedConfigured = true;
+                const html = this._md.render(parsed.body);
+                this.dom.preview.innerHTML = html;
+            } else {
+                // Simple markdown rendering fallback
+                this.dom.preview.innerHTML = this.simpleMarkdown(parsed.body);
             }
 
-            this.dom.preview.innerHTML = marked.parse(parsed.body);
-        } else {
-            // Simple markdown rendering fallback
-            this.dom.preview.innerHTML = this.simpleMarkdown(parsed.body);
+            // Post-process: add GFM task list classes for CSS styling
+            this.addTaskListClasses();
+
+            // Make task list checkboxes interactive
+            this.bindPreviewCheckboxes();
+
+            // Fix relative image paths for entry bundles
+            await this.fixImagePaths();
+
+            // Update scroll sync after render
+            if (this.scrollSync) {
+                this.scrollSync.watchImages();
+                this.scrollSync.buildScrollMap();
+            }
+        } finally {
+            // Allow DOM to stabilize before allowing sync (200ms for large files)
+            setTimeout(() => {
+                this.isRendering = false;
+            }, 200);
         }
-
-        // Post-process: add GFM task list classes for CSS styling
-        this.addTaskListClasses();
-
-        // Make task list checkboxes interactive
-        this.bindPreviewCheckboxes();
-
-        // Fix relative image paths for entry bundles
-        await this.fixImagePaths();
     }
 
     async fixImagePaths() {
@@ -1422,8 +1527,13 @@ class App {
         const checkboxes = this.dom.preview.querySelectorAll('input[type="checkbox"]');
 
         checkboxes.forEach((checkbox, index) => {
-            checkbox.addEventListener('change', () => {
+            checkbox.addEventListener('change', (e) => {
+                // Prevent input event from triggering full sync
+                e.stopPropagation();
+                this.isCheckboxToggle = true;
                 this.toggleCheckboxInSource(index, checkbox.checked);
+                // Clear flag after a tick
+                setTimeout(() => { this.isCheckboxToggle = false; }, 10);
             });
         });
     }
@@ -2156,16 +2266,20 @@ class App {
     }
 
     confirmDeleteEntry(path, dirname, title, entryUri) {
+        console.log('[App] confirmDeleteEntry called:', { path, dirname, title, entryUri });
         // Simple confirmation
         const confirmed = confirm(`Delete "${title}"?\n\nThis cannot be undone.`);
+        console.log('[App] confirmDeleteEntry - user confirmed:', confirmed);
         if (confirmed) {
             this.deleteEntry(path, dirname, entryUri);
         }
     }
 
     async deleteEntry(path, dirname, entryUri) {
+        console.log('[App] deleteEntry called:', { path, dirname, entryUri });
         try {
             const result = await platform.deleteEntry(path, entryUri);
+            console.log('[App] deleteEntry result:', result);
             if (result.success) {
                 // If we deleted the current entry, clear editor (don't auto-create new)
                 if (this.currentEntry && this.currentEntry.path === path) {
@@ -2266,8 +2380,30 @@ class App {
 
     async loadEntry(path, dirname, entryUri) {
         try {
+            // Clean up empty previous entry before switching
+            if (this.currentEntry && !this.hasContent()) {
+                console.log('[App] Deleting empty entry before switch:', this.currentEntry.path);
+                console.log('[App] Entry URI for delete:', this.currentEntry.entryUri);
+                const deleteResult = await platform.deleteEntry(this.currentEntry.path, this.currentEntry.entryUri);
+                console.log('[App] Delete result:', JSON.stringify(deleteResult));
+                // Remove from cache
+                if (window.metadataCache) {
+                    await window.metadataCache.deleteEntry(this.currentEntry.path);
+                }
+                // Remove from allEntries array and re-render sidebar
+                if (this.allEntries) {
+                    this.allEntries = this.allEntries.filter(e => e.path !== this.currentEntry.path);
+                    this.renderEntriesList(this.allEntries);
+                }
+            }
+
             const result = await platform.loadEntry(path);
             if (!result.success) return;
+
+            // Debug: Check checkbox content in loaded file
+            const checkedCount = (result.content.match(/- \[x\]/gi) || []).length;
+            const uncheckedCount = (result.content.match(/- \[ \]/g) || []).length;
+            console.log(`[App] Loaded file checkbox count - checked: ${checkedCount}, unchecked: ${uncheckedCount}`);
 
             this.currentEntry = { path, dirname, entryUri };
 
@@ -2296,6 +2432,14 @@ class App {
             if (this.currentMode === 'preview') {
                 await this.renderPreview();
             }
+
+            // Reset scroll position to top when loading a new entry
+            // Use setTimeout to ensure DOM is ready after content/render
+            setTimeout(() => {
+                this.dom.editor.scrollTop = 0;
+                this.dom.preview.scrollTop = 0;
+                console.log('[App] loadEntry - reset scroll to top');
+            }, 50);
 
             // Focus current editor
             this.focusCurrentEditor();

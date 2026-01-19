@@ -31,6 +31,7 @@ const jsFiles = [
     'gestures.js',
     'settings.js',
     'about.js',
+    'scroll-sync.js',
     'app.js'
 ];
 
