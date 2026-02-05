@@ -1,8 +1,8 @@
 {
-  "name": "at-the-speed-of-life",
+  "name": "lifespeed",
   "version": "1.0.0",
   "description": "A blazing-fast, mobile-first journaling app - launch to typing in milliseconds",
-  "homepage": "https://nicheknack.app/at-the-speed-of-life",
+  "homepage": "https://nicheknack.app/lifespeed",
   "main": "main.js",
   "scripts": {
     "start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
@@ -25,7 +25,14 @@
     "build:ios": "npm run bundle:prod && npx cap sync ios",
     "dev:android": "npm run cap:sync:android && npx cap run android",
     "dev:ios": "npm run cap:sync:ios && npx cap run ios",
-    "build:all": "npm run build:all-desktop && npm run build:android"
+    "build:all": "npm run build:all-desktop && npm run build:android",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc",
+    "tauri:build:mac": "tauri build --target x86_64-apple-darwin",
+    "tauri:build:release": "tauri build && ./scripts/copy-to-releases.sh"
   },
   "keywords": [
     "journal",
@@ -36,13 +43,17 @@
     "fast",
     "offline"
   ],
-  "author": "",
-  "license": "MIT",
+  "author": {
+    "name": "Niche-Knack",
+    "email": "support@nicheknack.app"
+  },
+  "license": "Apache-2.0",
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
     "esbuild": "^0.24.2",
-    "chokidar": "^3.6.0"
+    "chokidar": "^3.6.0",
+    "@tauri-apps/cli": "^2.0.0"
   },
   "dependencies": {
     "@capacitor/android": "^6.0.0",
@@ -55,14 +66,18 @@
     "@capacitor/toast": "^6.0.0",
     "fuse.js": "^7.0.0",
     "js-yaml": "^4.1.0",
-    "marked": "^11.0.0"
+    "marked": "^11.0.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0"
   },
   "build": {
-    "appId": "com.nicheknack.atthespeedoflife",
-    "productName": "At the Speed of Life",
+    "appId": "com.niche-knack.lifespeed",
+    "productName": "Lifespeed",
     "copyright": "Copyright 2024 Niche-Knack",
     "directories": {
-      "output": "dist"
+      "output": "../_shared/releases/lifespeed/electron/linux"
     },
     "files": [
       "main.js",
