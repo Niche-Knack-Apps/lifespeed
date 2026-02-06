@@ -40,6 +40,8 @@ class DebugLogger {
     this.isCapacitor = typeof window !== 'undefined' &&
                        typeof window.Capacitor !== 'undefined' &&
                        window.Capacitor.isNativePlatform?.();
+    this.isTauri = typeof window !== 'undefined' &&
+                   typeof window.__TAURI_INTERNALS__ !== 'undefined';
 
     // Original console methods (for restoration and internal use)
     this._originalConsole = {
@@ -65,10 +67,13 @@ class DebugLogger {
       this.isCapacitor = typeof window !== 'undefined' &&
                          typeof window.Capacitor !== 'undefined' &&
                          window.Capacitor.isNativePlatform?.();
+      this.isTauri = typeof window !== 'undefined' &&
+                     typeof window.__TAURI_INTERNALS__ !== 'undefined';
 
       this._originalConsole.log('[DebugLogger] Platform detection:', {
         isElectron: this.isElectron,
         isCapacitor: this.isCapacitor,
+        isTauri: this.isTauri,
         hasApi: typeof window.api !== 'undefined',
         hasAppendLog: typeof window.api?.appendLog === 'function'
       });
@@ -192,6 +197,8 @@ class DebugLogger {
       if (this.isElectron && window.api?.saveLogFile) {
         const result = await window.api.saveLogFile(content, filename);
         return result;
+      } else if (this.isTauri) {
+        return await this._tauriDownload(content, filename);
       } else if (this.isCapacitor) {
         // Use Capacitor Filesystem to save, then share
         return await this._capacitorDownload(content, filename);
@@ -203,6 +210,41 @@ class DebugLogger {
     } catch (error) {
       this._originalConsole.error('[DebugLogger] Download failed:', error);
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Download logs on Tauri using save dialog + write_file
+   */
+  async _tauriDownload(content, filename) {
+    try {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (!invoke) {
+        this._originalConsole.warn('[DebugLogger] Tauri invoke not available, using blob download');
+        this._blobDownload(content, filename);
+        return { success: true, filename, fallback: true };
+      }
+
+      // Show save dialog
+      const savePath = await invoke('save_file_dialog', {
+        title: 'Save Debug Logs',
+        defaultName: filename,
+        filters: [{ name: 'Log files', extensions: ['log', 'txt'] }]
+      });
+
+      if (!savePath) {
+        return { success: false, error: 'User cancelled save dialog' };
+      }
+
+      // Write file
+      await invoke('write_file', { path: savePath, content: content });
+      this._originalConsole.log('[DebugLogger] Logs saved to:', savePath);
+      return { success: true, filename, path: savePath };
+    } catch (error) {
+      this._originalConsole.error('[DebugLogger] Tauri download failed:', error);
+      // Fallback to blob download
+      this._blobDownload(content, filename);
+      return { success: true, filename, fallback: true };
     }
   }
 
@@ -445,6 +487,7 @@ class DebugLogger {
 
   _getPlatform() {
     if (this.isElectron) return 'electron';
+    if (this.isTauri) return 'tauri';
     if (this.isCapacitor) return window.Capacitor.getPlatform();
     return 'web';
   }
@@ -524,6 +567,6 @@ if (typeof module !== 'undefined' && module.exports) {
 // Auto-initialize when loaded in browser (CSP doesn't allow inline scripts)
 if (typeof window !== 'undefined') {
   window.DebugLogger = DebugLogger;
-  window.debugLogger = new DebugLogger({ appName: 'AtTheSpeedOfLife', maxEntries: 500 });
+  window.debugLogger = new DebugLogger({ appName: 'Lifespeed', maxEntries: 500 });
   window.debugLogger.init();
 }

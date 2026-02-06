@@ -1,5 +1,5 @@
 /**
- * Platform Abstraction Layer for At the Speed of Life
+ * Platform Abstraction Layer for Lifespeed
  * Detects and abstracts platform-specific functionality for Electron, Capacitor, and Web
  */
 
@@ -12,6 +12,9 @@ class PlatformService {
     }
 
     _detectPlatform() {
+        if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+            return 'tauri';
+        }
         if (typeof window !== 'undefined' && window.api) {
             return 'electron';
         }
@@ -22,9 +25,22 @@ class PlatformService {
     }
 
     isElectron() { return this.platform === 'electron'; }
+    isTauri() { return this.platform === 'tauri'; }
     isCapacitor() { return this.platform === 'capacitor'; }
     isWeb() { return this.platform === 'web'; }
-    isNative() { return this.isElectron() || this.isCapacitor(); }
+    isNative() { return this.isElectron() || this.isTauri() || this.isCapacitor(); }
+
+    async _invoke(cmd, args = {}) {
+        return window.__TAURI_INTERNALS__.invoke(cmd, args);
+    }
+
+    _convertFileSrc(filePath) {
+        const encoded = encodeURIComponent(filePath);
+        if (navigator.userAgent.includes('Windows')) {
+            return `https://asset.localhost/${encoded}`;
+        }
+        return `asset://localhost/${encoded}`;
+    }
 
     isMobile() {
         return this.isCapacitor() || window.innerWidth < this._mobileBreakpoint;
@@ -66,6 +82,15 @@ class PlatformService {
     // ===== SAF Directory Picker (Android) =====
 
     async pickDirectory() {
+        if (this.isTauri()) {
+            try {
+                const path = await this._invoke('choose_directory', { title: 'Select Journal Directory' });
+                if (path) return { success: true, path };
+                return { success: false, canceled: true };
+            } catch (e) {
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isCapacitor()) {
             const plugins = await this._getCapacitorPlugins();
             if (plugins.FolderPicker) {
@@ -84,6 +109,16 @@ class PlatformService {
     }
 
     async setEntriesDir(uri) {
+        if (this.isTauri()) {
+            try {
+                const settings = await this._loadSettingsTauri();
+                settings.entriesDirectory = uri;
+                await this._saveSettingsTauri(settings);
+                return { success: true };
+            } catch (e) {
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isElectron()) {
             return await window.api.setEntriesDir(uri);
         } else {
@@ -100,6 +135,9 @@ class PlatformService {
     // ===== Entry Operations =====
 
     async createEntry(title) {
+        if (this.isTauri()) {
+            return await this._createEntryTauri(title);
+        }
         if (this.isElectron()) {
             return await window.api.createEntry(title);
         } else if (this.isCapacitor()) {
@@ -110,6 +148,14 @@ class PlatformService {
     }
 
     async saveEntry(path, content) {
+        if (this.isTauri()) {
+            try {
+                await this._invoke('write_file', { path, content });
+                return { success: true };
+            } catch (e) {
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isElectron()) {
             return await window.api.saveEntry(path, content);
         } else if (this.isCapacitor()) {
@@ -120,6 +166,14 @@ class PlatformService {
     }
 
     async loadEntry(path) {
+        if (this.isTauri()) {
+            try {
+                const content = await this._invoke('read_file', { path });
+                return { success: true, content };
+            } catch (e) {
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isElectron()) {
             return await window.api.loadEntry(path);
         } else if (this.isCapacitor()) {
@@ -130,6 +184,9 @@ class PlatformService {
     }
 
     async listEntries() {
+        if (this.isTauri()) {
+            return await this._listEntriesTauri();
+        }
         if (this.isElectron()) {
             return await window.api.listEntries();
         } else if (this.isCapacitor()) {
@@ -140,11 +197,27 @@ class PlatformService {
     }
 
     async deleteEntry(path, entryUri) {
+        console.log('[Platform] deleteEntry called:', { path, entryUri, isTauri: this.isTauri(), isElectron: this.isElectron(), isCapacitor: this.isCapacitor() });
+        if (this.isTauri()) {
+            try {
+                const entryDir = path.replace(/\/index\.md$/, '');
+                console.log('[Platform] Tauri deleteEntry - entryDir:', entryDir);
+                await this._invoke('delete_directory', { path: entryDir });
+                console.log('[Platform] Tauri deleteEntry - success');
+                return { success: true };
+            } catch (e) {
+                console.error('[Platform] Tauri deleteEntry - error:', e);
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isElectron()) {
+            console.log('[Platform] Electron deleteEntry');
             return await window.api.deleteEntry(path);
         } else if (this.isCapacitor()) {
+            console.log('[Platform] Capacitor deleteEntry');
             return await this._deleteEntryCapacitor(path, entryUri);
         } else {
+            console.log('[Platform] Web deleteEntry');
             return await this._deleteEntryWeb(path);
         }
     }
@@ -152,6 +225,9 @@ class PlatformService {
     // ===== Image Operations =====
 
     async pasteImage(base64Data, entry) {
+        if (this.isTauri()) {
+            return await this._pasteImageTauri(base64Data, entry);
+        }
         if (this.isElectron()) {
             // Electron expects the file path string
             const entryPath = typeof entry === 'string' ? entry : entry.path;
@@ -164,6 +240,9 @@ class PlatformService {
     }
 
     async copyImage(sourcePath, entry) {
+        if (this.isTauri()) {
+            return await this._copyImageTauri(sourcePath, entry);
+        }
         if (this.isElectron()) {
             const entryPath = typeof entry === 'string' ? entry : entry.path;
             return await window.api.copyImage(sourcePath, entryPath);
@@ -178,6 +257,9 @@ class PlatformService {
     // ===== File Attachment Operations =====
 
     async attachFile(sourcePath, entry, filename) {
+        if (this.isTauri()) {
+            return await this._attachFileTauri(sourcePath, entry, filename);
+        }
         if (this.isElectron()) {
             const entryPath = typeof entry === 'string' ? entry : entry.path;
             return await window.api.attachFile(sourcePath, entryPath);
@@ -191,6 +273,14 @@ class PlatformService {
     // ===== Settings =====
 
     async loadSettings() {
+        if (this.isTauri()) {
+            try {
+                const settings = await this._loadSettingsTauri();
+                return { success: true, settings };
+            } catch (e) {
+                return { success: true, settings: this._defaultSettings() };
+            }
+        }
         if (this.isElectron()) {
             return await window.api.loadSettings();
         } else {
@@ -199,6 +289,14 @@ class PlatformService {
     }
 
     async saveSettings(settings) {
+        if (this.isTauri()) {
+            try {
+                await this._saveSettingsTauri(settings);
+                return { success: true };
+            } catch (e) {
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isElectron()) {
             return await window.api.saveSettings(settings);
         } else {
@@ -207,6 +305,15 @@ class PlatformService {
     }
 
     async getEntriesDir() {
+        if (this.isTauri()) {
+            try {
+                const settings = await this._loadSettingsTauri();
+                if (settings.entriesDirectory) return settings.entriesDirectory;
+            } catch (e) {
+                console.warn('[Platform] Failed to read Tauri settings:', e);
+            }
+            return await this._invoke('get_default_entries_dir');
+        }
         if (this.isElectron()) {
             return await window.api.getEntriesDir();
         } else {
@@ -219,6 +326,20 @@ class PlatformService {
     // ===== Search Index =====
 
     async loadIndex() {
+        if (this.isTauri()) {
+            try {
+                const userDataDir = await this._invoke('get_user_data_path');
+                const indexPath = userDataDir + '/search-index.json';
+                const exists = await this._invoke('file_exists', { path: indexPath });
+                if (exists) {
+                    const content = await this._invoke('read_file', { path: indexPath });
+                    return { success: true, index: JSON.parse(content) };
+                }
+            } catch (e) {
+                console.warn('[Platform] Failed to load Tauri index:', e);
+            }
+            return { success: true, index: null };
+        }
         if (this.isElectron()) {
             return await window.api.loadIndex();
         } else {
@@ -227,6 +348,16 @@ class PlatformService {
     }
 
     async saveIndex(indexData) {
+        if (this.isTauri()) {
+            try {
+                const userDataDir = await this._invoke('get_user_data_path');
+                const indexPath = userDataDir + '/search-index.json';
+                await this._invoke('write_file', { path: indexPath, content: JSON.stringify(indexData) });
+                return { success: true };
+            } catch (e) {
+                return { success: false, error: String(e) };
+            }
+        }
         if (this.isElectron()) {
             return await window.api.saveIndex(indexData);
         } else {
@@ -237,6 +368,11 @@ class PlatformService {
     // ===== Image Reading (for preview) =====
 
     async readImage(entry, relativePath) {
+        if (this.isTauri()) {
+            const entryPath = typeof entry === 'string' ? entry : entry.path;
+            const basePath = entryPath.replace('/index.md', '');
+            return { success: true, dataUrl: this._convertFileSrc(`${basePath}/${relativePath}`) };
+        }
         if (this.isElectron()) {
             // Electron: construct file:// URL
             const entryPath = typeof entry === 'string' ? entry : entry.path;
@@ -302,6 +438,8 @@ class PlatformService {
     // ===== File Watcher =====
 
     setupFileWatcher(callbacks) {
+        // Tauri: file watching not yet implemented
+        if (this.isTauri()) return;
         if (this.isElectron() && window.api) {
             if (callbacks.onAdded) window.api.onFileAdded(callbacks.onAdded);
             if (callbacks.onChanged) window.api.onFileChanged(callbacks.onChanged);
@@ -314,7 +452,7 @@ class PlatformService {
 
     _getDB() {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open('at-the-speed-of-life', 1);
+            const request = indexedDB.open('lifespeed', 1);
             request.onerror = () => reject(request.error);
             request.onsuccess = () => resolve(request.result);
             request.onupgradeneeded = (event) => {
@@ -480,6 +618,144 @@ draft: false
         });
     }
 
+    // ===== Tauri Implementations =====
+
+    async _loadSettingsTauri() {
+        try {
+            const userDataDir = await this._invoke('get_user_data_path');
+            const settingsPath = userDataDir + '/settings.json';
+            const exists = await this._invoke('file_exists', { path: settingsPath });
+            if (exists) {
+                const content = await this._invoke('read_file', { path: settingsPath });
+                return JSON.parse(content);
+            }
+        } catch (e) {
+            console.warn('[Platform] Failed to load Tauri settings:', e);
+        }
+        return this._defaultSettings();
+    }
+
+    async _saveSettingsTauri(settings) {
+        const userDataDir = await this._invoke('get_user_data_path');
+        const settingsPath = userDataDir + '/settings.json';
+        await this._invoke('write_file', { path: settingsPath, content: JSON.stringify(settings, null, 2) });
+    }
+
+    async _createEntryTauri(title) {
+        try {
+            const basePath = await this.getEntriesDir();
+            const now = new Date();
+            const date = now.toISOString().slice(0, 10);
+            const time = now.toTimeString().slice(0, 8).replace(/:/g, '-');
+            const slug = title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) : time;
+            const dirname = `${date}-${slug}`;
+            const entryPath = `${basePath}/${dirname}/index.md`;
+
+            const content = `---\ntitle: "${title || ''}"\ndate: ${now.toISOString()}\nlastmod: ${now.toISOString()}\ntags: []\ndraft: false\n---\n\n`;
+
+            await this._invoke('write_file', { path: entryPath, content });
+
+            return { success: true, path: entryPath, dirname, content };
+        } catch (e) {
+            console.error('[Platform] Tauri createEntry error:', e);
+            return { success: false, error: String(e) };
+        }
+    }
+
+    async _listEntriesTauri() {
+        try {
+            const basePath = await this.getEntriesDir();
+            const items = await this._invoke('list_directory', { path: basePath });
+            const entries = [];
+
+            for (const item of items) {
+                if (item.is_dir) {
+                    const indexPath = `${basePath}/${item.name}/index.md`;
+                    const exists = await this._invoke('file_exists', { path: indexPath });
+                    if (exists) {
+                        entries.push({
+                            dirname: item.name,
+                            path: indexPath,
+                            mtime: new Date(item.mtime_ms).toISOString()
+                        });
+                    }
+                }
+            }
+
+            entries.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+            return { success: true, entries };
+        } catch (e) {
+            console.error('[Platform] Tauri listEntries error:', e);
+            return { success: false, error: String(e), entries: [] };
+        }
+    }
+
+    async _pasteImageTauri(base64Data, entry) {
+        try {
+            const entryPath = typeof entry === 'string' ? entry : entry.path;
+            const entryDir = entryPath.replace('/index.md', '');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const filename = `${timestamp}.png`;
+            const imagePath = `${entryDir}/images/${filename}`;
+
+            await this._invoke('write_file_base64', { path: imagePath, base64Data });
+
+            return {
+                success: true,
+                filename,
+                relativePath: `images/${filename}`,
+                markdown: `![](images/${filename})`
+            };
+        } catch (e) {
+            console.error('[Platform] Tauri pasteImage error:', e);
+            return { success: false, error: String(e) };
+        }
+    }
+
+    async _copyImageTauri(sourcePath, entry) {
+        try {
+            const entryPath = typeof entry === 'string' ? entry : entry.path;
+            const entryDir = entryPath.replace('/index.md', '');
+            const ext = sourcePath.split('.').pop();
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const filename = `${timestamp}.${ext}`;
+            const destPath = `${entryDir}/images/${filename}`;
+
+            await this._invoke('copy_file', { source: sourcePath, destination: destPath });
+
+            return {
+                success: true,
+                filename,
+                relativePath: `images/${filename}`,
+                markdown: `![](images/${filename})`
+            };
+        } catch (e) {
+            console.error('[Platform] Tauri copyImage error:', e);
+            return { success: false, error: String(e) };
+        }
+    }
+
+    async _attachFileTauri(sourcePath, entry, filename) {
+        try {
+            const entryPath = typeof entry === 'string' ? entry : entry.path;
+            const entryDir = entryPath.replace('/index.md', '');
+            const name = filename || sourcePath.split('/').pop();
+            const destPath = `${entryDir}/files/${name}`;
+
+            await this._invoke('copy_file', { source: sourcePath, destination: destPath });
+
+            return {
+                success: true,
+                filename: name,
+                relativePath: `files/${name}`,
+                markdown: `[${name}](files/${name})`
+            };
+        } catch (e) {
+            console.error('[Platform] Tauri attachFile error:', e);
+            return { success: false, error: String(e) };
+        }
+    }
+
     // ===== Capacitor Implementations =====
 
     async _getEntriesDirectoryUri() {
@@ -626,20 +902,26 @@ draft: false
     }
 
     async _deleteEntryCapacitor(path, entryUri) {
+        console.log('[Platform] _deleteEntryCapacitor called - path:', path, 'entryUri:', entryUri);
         // Use native SAF delete if we have an entryUri
         if (entryUri) {
             const plugins = await this._getCapacitorPlugins();
+            console.log('[Platform] Has FolderPicker:', !!plugins.FolderPicker);
             if (plugins.FolderPicker) {
                 try {
+                    console.log('[Platform] Calling native deleteEntry with entryUri:', entryUri);
                     const result = await plugins.FolderPicker.deleteEntry({
                         entryUri: entryUri
                     });
+                    console.log('[Platform] Native deleteEntry result:', JSON.stringify(result));
                     return result;
                 } catch (e) {
                     console.error('[Platform] SAF deleteEntry error:', e);
                     return { success: false, error: e.message };
                 }
             }
+        } else {
+            console.log('[Platform] No entryUri provided, falling back to IndexedDB');
         }
         // Fallback to IndexedDB delete
         return this._deleteEntryWeb(path);
@@ -750,6 +1032,8 @@ draft: false
      * Used for comparing with cache to detect new/modified/deleted entries
      */
     async listEntriesFast() {
+        // Tauri: delegate to regular listEntries
+        if (this.isTauri()) return this.listEntries();
         if (this.isCapacitor()) {
             const baseUri = await this._getEntriesDirectoryUri();
             if (!baseUri) {

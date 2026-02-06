@@ -1,14 +1,15 @@
 /**
- * At the Speed of Life - Main Application
+ * Lifespeed - Main Application
  * Initializes all components and manages app state
  */
 
 // VERSION MARKER - if you see this in console, new code is loaded
-console.log('[App] CODE VERSION: 2026-01-09-v3-filesystem-first');
+console.log('[App] CODE VERSION: 2026-02-06-v4-delete-logging');
 
 class App {
     constructor() {
         this.currentEntry = null;
+        this.isDraft = false; // True when entry exists in memory only, not yet on disk
         this.settings = null;
         this.autoSaveTimeout = null;
         this.isInitialized = false;
@@ -54,8 +55,9 @@ class App {
             });
         }
 
-        // SPEED: Create new entry FIRST, show UI immediately
-        await this.createNewEntry();
+        // SPEED: Prepare draft entry in memory ONLY (no disk write)
+        // File is created on first auto-save when user actually types
+        await this.prepareDraftEntry();
 
         // Hide loading, show app IMMEDIATELY
         this.dom.loading.classList.add('hidden');
@@ -93,7 +95,7 @@ class App {
      */
     async ensureCurrentEntryInSidebar() {
         try {
-            if (!this.currentEntry || !this.allEntries) return;
+            if (!this.currentEntry || !this.allEntries || this.isDraft) return;
 
             // Check if current entry is already in the list
             const exists = this.allEntries.some(e =>
@@ -219,6 +221,9 @@ class App {
     // Save if has content, otherwise discard empty entry
     async saveOrDiscardCurrentEntry() {
         if (!this.currentEntry) return;
+
+        // Draft entries have no file on disk — nothing to save or delete
+        if (this.isDraft) return;
 
         if (this.hasContent()) {
             await this.saveCurrentEntryImmediate();
@@ -854,9 +859,30 @@ class App {
         if (!this.currentEntry) return;
 
         try {
-            // NOTE: We do NOT sync preview to source here anymore.
-            // The editor is kept in sync by the input event handler during editing.
-            // Syncing here would corrupt checkbox states on notes that weren't edited.
+            // If this is a draft (not yet on disk), only save if user added content
+            if (this.isDraft) {
+                const content = this.dom.editor.value;
+                const parsed = frontmatter.parse(content);
+                if (!parsed.body.trim()) return; // Don't write empty drafts to disk
+                // Draft has content — it will be written to disk below via saveEntry
+                this.isDraft = false;
+                // Add to sidebar and cache now that it's real
+                if (this.allEntries) {
+                    const newEntry = {
+                        path: this.currentEntry.path,
+                        dirname: this.currentEntry.dirname,
+                        entryUri: this.currentEntry.entryUri,
+                        title: this.dom.metaTitle.value.trim() || 'New Entry',
+                        date: new Date().toISOString(),
+                        mtime: Date.now()
+                    };
+                    this.allEntries.unshift(newEntry);
+                    this.renderEntriesList(this.allEntries);
+                    if (window.metadataCache) {
+                        await window.metadataCache.saveEntry(newEntry);
+                    }
+                }
+            }
 
             // Update content from editor
             const content = this.dom.editor.value;
@@ -1043,11 +1069,12 @@ class App {
         }
     }
 
-    // Custom async prompt (Electron doesn't support native prompt())
+    // Custom async prompt (native prompt() not supported in Tauri/Electron webview)
     asyncPrompt(message, defaultValue = '') {
         return new Promise((resolve) => {
             this.dom.promptMessage.textContent = message;
             this.dom.promptInput.value = defaultValue;
+            this.dom.promptInput.style.display = '';
             this.dom.promptModal.classList.remove('hidden');
             this.dom.promptInput.focus();
             this.dom.promptInput.select();
@@ -1084,6 +1111,78 @@ class App {
             this.dom.promptCancel.addEventListener('click', onCancel);
             this.dom.promptInput.addEventListener('keydown', onKeydown);
             this.dom.promptModal.querySelector('.modal-backdrop').addEventListener('click', onCancel);
+        });
+    }
+
+    // Custom async confirm (native confirm() not supported in Tauri/Electron webview)
+    asyncConfirm(message) {
+        console.log('[App] asyncConfirm: opening modal with message:', message);
+        return new Promise((resolve) => {
+            // Safety: if any of these DOM elements are missing, resolve false
+            if (!this.dom.promptModal || !this.dom.promptOk || !this.dom.promptCancel) {
+                console.error('[App] asyncConfirm: MISSING DOM ELEMENTS', {
+                    promptModal: !!this.dom.promptModal,
+                    promptOk: !!this.dom.promptOk,
+                    promptCancel: !!this.dom.promptCancel
+                });
+                resolve(false);
+                return;
+            }
+
+            this.dom.promptMessage.textContent = message;
+            this.dom.promptInput.style.display = 'none';
+            this.dom.promptOk.textContent = 'Delete';
+            this.dom.promptOk.classList.add('btn-danger');
+            this.dom.promptModal.classList.remove('hidden');
+            console.log('[App] asyncConfirm: modal shown, focusing OK button');
+            this.dom.promptOk.focus();
+
+            let resolved = false;
+
+            const cleanup = () => {
+                console.log('[App] asyncConfirm: cleanup called');
+                this.dom.promptModal.classList.add('hidden');
+                this.dom.promptInput.style.display = '';
+                this.dom.promptOk.textContent = 'OK';
+                this.dom.promptOk.classList.remove('btn-danger');
+                this.dom.promptOk.removeEventListener('click', onOk);
+                this.dom.promptCancel.removeEventListener('click', onCancel);
+                document.removeEventListener('keydown', onKeydown);
+                const backdrop = this.dom.promptModal.querySelector('.modal-backdrop');
+                if (backdrop) backdrop.removeEventListener('click', onCancel);
+            };
+
+            const onOk = () => {
+                if (resolved) return;
+                resolved = true;
+                console.log('[App] asyncConfirm: user clicked OK/Delete');
+                cleanup();
+                resolve(true);
+            };
+
+            const onCancel = () => {
+                if (resolved) return;
+                resolved = true;
+                console.log('[App] asyncConfirm: user clicked Cancel');
+                cleanup();
+                resolve(false);
+            };
+
+            const onKeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onOk();
+                } else if (e.key === 'Escape') {
+                    onCancel();
+                }
+            };
+
+            this.dom.promptOk.addEventListener('click', onOk);
+            this.dom.promptCancel.addEventListener('click', onCancel);
+            // Listen on document for keyboard events (more reliable than modal div)
+            document.addEventListener('keydown', onKeydown);
+            const backdrop = this.dom.promptModal.querySelector('.modal-backdrop');
+            if (backdrop) backdrop.addEventListener('click', onCancel);
         });
     }
 
@@ -2161,6 +2260,7 @@ class App {
         // Click on delete button
         item.querySelector('.btn-delete-entry').addEventListener('click', (e) => {
             e.stopPropagation();
+            console.log('[App] Delete button clicked for entry:', { path: entry.path, dirname: entry.dirname, title, entryUri: entry.entryUri });
             this.confirmDeleteEntry(entry.path, entry.dirname, title, entry.entryUri);
         });
 
@@ -2265,79 +2365,116 @@ class App {
         return groups;
     }
 
-    confirmDeleteEntry(path, dirname, title, entryUri) {
-        console.log('[App] confirmDeleteEntry called:', { path, dirname, title, entryUri });
-        // Simple confirmation
-        const confirmed = confirm(`Delete "${title}"?\n\nThis cannot be undone.`);
-        console.log('[App] confirmDeleteEntry - user confirmed:', confirmed);
-        if (confirmed) {
-            this.deleteEntry(path, dirname, entryUri);
+    async confirmDeleteEntry(path, dirname, title, entryUri) {
+        console.log('[App] confirmDeleteEntry START:', { path, dirname, title, entryUri });
+        try {
+            const confirmed = await this.asyncConfirm(`Delete "${title}"?\n\nThis cannot be undone.`);
+            console.log('[App] confirmDeleteEntry - asyncConfirm resolved:', confirmed);
+            if (confirmed) {
+                console.log('[App] confirmDeleteEntry - proceeding to deleteEntry');
+                await this.deleteEntry(path, dirname, entryUri);
+                console.log('[App] confirmDeleteEntry - deleteEntry completed');
+            } else {
+                console.log('[App] confirmDeleteEntry - user cancelled');
+            }
+        } catch (error) {
+            console.error('[App] confirmDeleteEntry ERROR:', error, error?.stack);
         }
     }
 
     async deleteEntry(path, dirname, entryUri) {
-        console.log('[App] deleteEntry called:', { path, dirname, entryUri });
+        console.log('[App] deleteEntry START:', { path, dirname, entryUri });
+        console.log('[App] deleteEntry - platform type:', {
+            isTauri: platform.isTauri(),
+            isElectron: platform.isElectron(),
+            isCapacitor: platform.isCapacitor()
+        });
+        console.log('[App] deleteEntry - currentEntry:', this.currentEntry ? {
+            path: this.currentEntry.path,
+            dirname: this.currentEntry.dirname
+        } : null);
+
         try {
+            console.log('[App] deleteEntry - calling platform.deleteEntry...');
             const result = await platform.deleteEntry(path, entryUri);
-            console.log('[App] deleteEntry result:', result);
+            console.log('[App] deleteEntry - platform.deleteEntry result:', JSON.stringify(result));
+
             if (result.success) {
                 // If we deleted the current entry, clear editor (don't auto-create new)
-                if (this.currentEntry && this.currentEntry.path === path) {
+                const isCurrentEntry = this.currentEntry && this.currentEntry.path === path;
+                console.log('[App] deleteEntry - isCurrentEntry:', isCurrentEntry);
+
+                if (isCurrentEntry) {
                     this.currentEntry = null;
                     this.dom.editor.value = '';
                     this.dom.preview.innerHTML = '';
-                    this.dom.headerTitle.textContent = 'At the Speed of Life';
+                    this.dom.headerTitle.textContent = 'Lifespeed';
                     this.dom.metaTitle.value = '';
                     this.dom.metaTags.value = '';
                     this.dom.metaDate.textContent = '';
                     this.updateWordCount();
+                    console.log('[App] deleteEntry - cleared current entry from editor');
                 }
 
                 // Remove from local entries array (don't reload entire list!)
                 if (this.allEntries) {
+                    const prevCount = this.allEntries.length;
                     this.allEntries = this.allEntries.filter(e => e.path !== path);
+                    console.log('[App] deleteEntry - removed from allEntries:', prevCount, '->', this.allEntries.length);
                     this.renderEntriesList(this.allEntries);
                 }
 
                 // Remove from cache
                 if (window.metadataCache) {
                     await window.metadataCache.deleteEntry(path);
+                    console.log('[App] deleteEntry - removed from metadataCache');
                 }
 
                 // Clear finder cache (will rebuild on next search)
                 this.finderEntries = [];
                 this.fuse = null;
 
-                console.log('[App] Entry deleted:', path);
+                console.log('[App] deleteEntry SUCCESS:', path);
                 platform.showToast('Entry deleted');
             } else {
+                console.error('[App] deleteEntry FAILED - result:', JSON.stringify(result));
                 platform.showToast('Failed to delete entry');
             }
         } catch (error) {
-            console.error('[App] Delete failed:', error);
+            console.error('[App] deleteEntry ERROR:', error, error?.stack);
             platform.showToast('Failed to delete entry');
         }
     }
 
     // ===== Entry Operations =====
 
-    async createNewEntry() {
+    /**
+     * Prepare a draft entry in memory without writing to disk.
+     * The file is only created when the user types and auto-save triggers.
+     * This prevents orphaned empty entries from accumulating on every app launch.
+     */
+    async prepareDraftEntry() {
         try {
-            const result = await platform.createEntry();
-            if (!result.success) return;
+            const basePath = await platform.getEntriesDir();
+            const now = new Date();
+            const date = now.toISOString().slice(0, 10);
+            const time = now.toTimeString().slice(0, 8).replace(/:/g, '-');
+            const dirname = `${date}-${time}`;
+            const entryPath = `${basePath}/${dirname}/index.md`;
+            const content = `---\ntitle: ""\ndate: ${now.toISOString()}\nlastmod: ${now.toISOString()}\ntags: []\ndraft: false\n---\n\n`;
 
             this.currentEntry = {
-                path: result.path,
-                dirname: result.dirname,
-                entryUri: result.entryUri // SAF entry directory URI
+                path: entryPath,
+                dirname: dirname
             };
+            this.isDraft = true;
 
             // Set editor content
-            this.dom.editor.value = result.content;
-            this.lastSavedContent = result.content;
+            this.dom.editor.value = content;
+            this.lastSavedContent = content;
 
             // Parse and display metadata
-            const parsed = frontmatter.parse(result.content);
+            const parsed = frontmatter.parse(content);
             this.displayMetadata(parsed.data);
 
             // Update header
@@ -2348,64 +2485,51 @@ class App {
                 await this.renderPreview();
             }
 
-            // Add to sidebar locally (don't reload entire list)
-            // loadEntriesList() is called separately in init()
-            if (this.isInitialized && this.allEntries) {
-                const newEntry = {
-                    path: result.path,
-                    dirname: result.dirname,
-                    entryUri: result.entryUri,
-                    title: 'New Entry',
-                    date: new Date().toISOString(),
-                    mtime: Date.now()
-                };
-                this.allEntries.unshift(newEntry);
-                this.renderEntriesList(this.allEntries);
-
-                // Save to metadata cache so it persists across restarts
-                if (window.metadataCache) {
-                    await window.metadataCache.saveEntry(newEntry);
-                }
-            }
-
-            // Focus current editor
-            this.focusCurrentEditor();
-            // Don't close sidebar - let user close it manually
-
-            this.updateWordCount(); // Updates status automatically
+            this.updateWordCount();
         } catch (error) {
-            console.error('[App] Failed to create entry:', error);
+            console.error('[App] Failed to prepare draft entry:', error);
         }
+    }
+
+    async createNewEntry() {
+        // Save or discard current entry before creating new one
+        if (this.currentEntry && !this.isDraft) {
+            await this.saveOrDiscardCurrentEntry();
+        }
+
+        // Use the same draft pattern — file created on first save
+        await this.prepareDraftEntry();
+
+        // Focus current editor
+        this.focusCurrentEditor();
     }
 
     async loadEntry(path, dirname, entryUri) {
         try {
-            // Clean up empty previous entry before switching
-            if (this.currentEntry && !this.hasContent()) {
-                console.log('[App] Deleting empty entry before switch:', this.currentEntry.path);
-                console.log('[App] Entry URI for delete:', this.currentEntry.entryUri);
-                const deleteResult = await platform.deleteEntry(this.currentEntry.path, this.currentEntry.entryUri);
-                console.log('[App] Delete result:', JSON.stringify(deleteResult));
-                // Remove from cache
-                if (window.metadataCache) {
-                    await window.metadataCache.deleteEntry(this.currentEntry.path);
-                }
-                // Remove from allEntries array and re-render sidebar
-                if (this.allEntries) {
-                    this.allEntries = this.allEntries.filter(e => e.path !== this.currentEntry.path);
-                    this.renderEntriesList(this.allEntries);
+            // Clean up previous entry before switching
+            if (this.currentEntry) {
+                if (this.isDraft) {
+                    // Draft was never written to disk — just discard
+                    this.isDraft = false;
+                } else if (!this.hasContent()) {
+                    console.log('[App] Deleting empty entry before switch:', this.currentEntry.path);
+                    const deleteResult = await platform.deleteEntry(this.currentEntry.path, this.currentEntry.entryUri);
+                    console.log('[App] Delete result:', JSON.stringify(deleteResult));
+                    if (window.metadataCache) {
+                        await window.metadataCache.deleteEntry(this.currentEntry.path);
+                    }
+                    if (this.allEntries) {
+                        this.allEntries = this.allEntries.filter(e => e.path !== this.currentEntry.path);
+                        this.renderEntriesList(this.allEntries);
+                    }
                 }
             }
 
             const result = await platform.loadEntry(path);
             if (!result.success) return;
 
-            // Debug: Check checkbox content in loaded file
-            const checkedCount = (result.content.match(/- \[x\]/gi) || []).length;
-            const uncheckedCount = (result.content.match(/- \[ \]/g) || []).length;
-            console.log(`[App] Loaded file checkbox count - checked: ${checkedCount}, unchecked: ${uncheckedCount}`);
-
             this.currentEntry = { path, dirname, entryUri };
+            this.isDraft = false;
 
             // Set editor content
             this.dom.editor.value = result.content;
