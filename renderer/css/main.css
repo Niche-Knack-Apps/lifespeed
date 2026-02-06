@@ -59,41 +59,41 @@
     --overlay-bg: rgba(12, 11, 15, 0.8);
 }
 
-/* Light theme — exact inverse of dark (same purple undertone, mirrored lightness) */
+/* Light theme — same purple DNA as dark, proper light backgrounds */
 [data-theme="light"] {
     color-scheme: light;
-    --bg-primary: #e1e0e7;
-    --bg-secondary: #d8d7de;
-    --bg-tertiary: #cdccd4;
-    --bg-elevated: #ebeaf2;
+    --bg-primary: #f8f7fc;
+    --bg-secondary: #efeef5;
+    --bg-tertiary: #e6e5ed;
+    --bg-elevated: #ffffff;
     --text-primary: #1a1720;
-    --text-secondary: #504d59;
-    --text-muted: #888693;
-    --border-color: #c0bec8;
-    --border-light: #b6b4bf;
-    --shadow-sm: 0 1px 3px rgba(26, 23, 32, 0.1), 0 1px 2px rgba(26, 23, 32, 0.06);
-    --shadow: 0 4px 12px rgba(26, 23, 32, 0.12), 0 2px 4px rgba(26, 23, 32, 0.06);
-    --shadow-lg: 0 12px 40px rgba(26, 23, 32, 0.18), 0 4px 12px rgba(26, 23, 32, 0.08);
-    --overlay-bg: rgba(26, 23, 32, 0.6);
+    --text-secondary: #46434f;
+    --text-muted: #706d7a;
+    --border-color: #d8d6e0;
+    --border-light: #e4e2ed;
+    --shadow-sm: 0 1px 3px rgba(26, 23, 32, 0.08), 0 1px 2px rgba(26, 23, 32, 0.04);
+    --shadow: 0 4px 12px rgba(26, 23, 32, 0.10), 0 2px 4px rgba(26, 23, 32, 0.05);
+    --shadow-lg: 0 12px 40px rgba(26, 23, 32, 0.14), 0 4px 12px rgba(26, 23, 32, 0.06);
+    --overlay-bg: rgba(26, 23, 32, 0.55);
 }
 
 /* System theme (media query) */
 @media (prefers-color-scheme: light) {
     [data-theme="system"] {
         color-scheme: light;
-        --bg-primary: #e1e0e7;
-        --bg-secondary: #d8d7de;
-        --bg-tertiary: #cdccd4;
-        --bg-elevated: #ebeaf2;
+        --bg-primary: #f8f7fc;
+        --bg-secondary: #efeef5;
+        --bg-tertiary: #e6e5ed;
+        --bg-elevated: #ffffff;
         --text-primary: #1a1720;
-        --text-secondary: #504d59;
-        --text-muted: #888693;
-        --border-color: #c0bec8;
-        --border-light: #b6b4bf;
-        --shadow-sm: 0 1px 3px rgba(26, 23, 32, 0.1), 0 1px 2px rgba(26, 23, 32, 0.06);
-        --shadow: 0 4px 12px rgba(26, 23, 32, 0.12), 0 2px 4px rgba(26, 23, 32, 0.06);
-        --shadow-lg: 0 12px 40px rgba(26, 23, 32, 0.18), 0 4px 12px rgba(26, 23, 32, 0.08);
-        --overlay-bg: rgba(26, 23, 32, 0.6);
+        --text-secondary: #46434f;
+        --text-muted: #706d7a;
+        --border-color: #d8d6e0;
+        --border-light: #e4e2ed;
+        --shadow-sm: 0 1px 3px rgba(26, 23, 32, 0.08), 0 1px 2px rgba(26, 23, 32, 0.04);
+        --shadow: 0 4px 12px rgba(26, 23, 32, 0.10), 0 2px 4px rgba(26, 23, 32, 0.05);
+        --shadow-lg: 0 12px 40px rgba(26, 23, 32, 0.14), 0 4px 12px rgba(26, 23, 32, 0.06);
+        --overlay-bg: rgba(26, 23, 32, 0.55);
     }
 }
 
