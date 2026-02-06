@@ -1973,26 +1973,60 @@ class App {
         try {
             // Get ALL entries from filesystem (the source of truth)
             const dirList = await platform.listEntriesFast();
-            console.log('[App] Filesystem has', dirList.entries?.length || 0, 'entries');
+            const diskEntries = dirList.entries || [];
+            console.log('[App] Filesystem has', diskEntries.length, 'entries, sidebar has', this.allEntries?.length || 0);
 
-            if (!dirList.success || !dirList.entries) {
+            if (!dirList.success) {
                 console.error('[App] Failed to list filesystem entries');
                 return;
             }
+
+            // Build lookup sets from disk entries
+            const diskPaths = new Set(diskEntries.map(e => e.path));
+            const diskDirnames = new Set(diskEntries.map(e => e.dirname));
 
             // Build lookup of what's currently in sidebar
             const sidebarPaths = new Set(this.allEntries?.map(e => e.path) || []);
             const sidebarDirnames = new Set(this.allEntries?.map(e => e.dirname) || []);
 
-            // Find entries on disk that aren't in sidebar
-            const missingFromSidebar = dirList.entries.filter(e =>
+            let changed = false;
+
+            // STEP 1: Remove ghost entries from sidebar that aren't on disk
+            if (this.allEntries && this.allEntries.length > 0) {
+                const prevCount = this.allEntries.length;
+                const ghostEntries = this.allEntries.filter(e =>
+                    !diskPaths.has(e.path) && !diskDirnames.has(e.dirname)
+                );
+
+                if (ghostEntries.length > 0) {
+                    console.log('[App] Removing', ghostEntries.length, 'ghost entries not on disk:',
+                        ghostEntries.map(e => e.dirname));
+
+                    // Remove from cache
+                    for (const ghost of ghostEntries) {
+                        if (window.metadataCache) {
+                            await window.metadataCache.deleteEntry(ghost.path);
+                        }
+                    }
+
+                    // Remove from allEntries
+                    this.allEntries = this.allEntries.filter(e =>
+                        diskPaths.has(e.path) || diskDirnames.has(e.dirname)
+                    );
+
+                    console.log('[App] Sidebar entries: was', prevCount, ', now', this.allEntries.length);
+                    changed = true;
+                }
+            }
+
+            // STEP 2: Add entries from disk that aren't in sidebar
+            const missingFromSidebar = diskEntries.filter(e =>
                 !sidebarPaths.has(e.path) && !sidebarDirnames.has(e.dirname)
             );
 
             console.log('[App] Found', missingFromSidebar.length, 'entries on disk not in sidebar');
 
             if (missingFromSidebar.length > 0) {
-                // Add missing entries to sidebar
                 for (const entry of missingFromSidebar) {
                     const newEntry = {
                         path: entry.path,
@@ -2004,15 +2038,17 @@ class App {
                     };
                     this.allEntries.unshift(newEntry);
 
-                    // Also save to cache for next time
                     if (window.metadataCache) {
                         await window.metadataCache.saveEntry(newEntry);
                     }
                 }
-
-                // Re-render sidebar with new entries
-                this.renderEntriesList(this.allEntries);
+                changed = true;
                 console.log('[App] Added', missingFromSidebar.length, 'missing entries to sidebar');
+            }
+
+            // Re-render sidebar if anything changed
+            if (changed) {
+                this.renderEntriesList(this.allEntries);
             }
 
             console.log('[App] Filesystem verification complete');
@@ -2384,26 +2420,24 @@ class App {
 
     async deleteEntry(path, dirname, entryUri) {
         console.log('[App] deleteEntry START:', { path, dirname, entryUri });
-        console.log('[App] deleteEntry - platform type:', {
-            isTauri: platform.isTauri(),
-            isElectron: platform.isElectron(),
-            isCapacitor: platform.isCapacitor()
-        });
-        console.log('[App] deleteEntry - currentEntry:', this.currentEntry ? {
-            path: this.currentEntry.path,
-            dirname: this.currentEntry.dirname
-        } : null);
 
         try {
             console.log('[App] deleteEntry - calling platform.deleteEntry...');
             const result = await platform.deleteEntry(path, entryUri);
             console.log('[App] deleteEntry - platform.deleteEntry result:', JSON.stringify(result));
 
-            if (result.success) {
-                // If we deleted the current entry, clear editor (don't auto-create new)
-                const isCurrentEntry = this.currentEntry && this.currentEntry.path === path;
-                console.log('[App] deleteEntry - isCurrentEntry:', isCurrentEntry);
+            // Clean up sidebar/cache regardless of whether file existed on disk
+            // (handles ghost entries where file was already gone)
+            const fileDeleted = result.success;
+            const fileNotFound = !result.success && result.error && result.error.includes('No such file');
 
+            if (fileDeleted || fileNotFound) {
+                if (fileNotFound) {
+                    console.log('[App] deleteEntry - file already gone from disk, cleaning up cache/sidebar');
+                }
+
+                // If we deleted the current entry, clear editor
+                const isCurrentEntry = this.currentEntry && this.currentEntry.path === path;
                 if (isCurrentEntry) {
                     this.currentEntry = null;
                     this.dom.editor.value = '';
@@ -2416,10 +2450,10 @@ class App {
                     console.log('[App] deleteEntry - cleared current entry from editor');
                 }
 
-                // Remove from local entries array (don't reload entire list!)
+                // Remove from local entries array
                 if (this.allEntries) {
                     const prevCount = this.allEntries.length;
-                    this.allEntries = this.allEntries.filter(e => e.path !== path);
+                    this.allEntries = this.allEntries.filter(e => e.path !== path && e.dirname !== dirname);
                     console.log('[App] deleteEntry - removed from allEntries:', prevCount, '->', this.allEntries.length);
                     this.renderEntriesList(this.allEntries);
                 }
@@ -2430,7 +2464,7 @@ class App {
                     console.log('[App] deleteEntry - removed from metadataCache');
                 }
 
-                // Clear finder cache (will rebuild on next search)
+                // Clear finder cache
                 this.finderEntries = [];
                 this.fuse = null;
 
