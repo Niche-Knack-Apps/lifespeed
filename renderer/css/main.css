@@ -358,6 +358,7 @@ button {
 }
 
 .entry-item.active .entry-date,
+.entry-item.active .entry-preview,
 .entry-item.active .entry-tags {
     color: var(--bg-secondary);
 }
@@ -404,6 +405,15 @@ button {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.entry-preview {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
 }
 
 .entry-date {
