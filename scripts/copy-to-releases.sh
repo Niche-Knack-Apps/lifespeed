@@ -15,7 +15,7 @@ cd "$PROJECT_ROOT"
 # App-specific configuration
 APP_NAME="lifespeed"
 BINARY_NAME="lifespeed"
-APP_ID="com.niche-knack.lifespeed"
+APP_ID="com.nicheknack.lifespeed"
 VERSION=$(node -p "require('./package.json').version")
 RELEASES_DIR="../_shared/releases/$APP_NAME/tauri"
 FLATPAK_DIR="$PROJECT_ROOT/packaging/flatpak"
@@ -59,10 +59,32 @@ find src-tauri/gen/apple -name "*.ipa" -exec cp {} "$RELEASES_DIR/ios/" \; 2>/de
 echo "  Local artifacts copied."
 
 # =============================================================================
-# PHASE 2: Build Flatpak (Linux)
+# PHASE 2: Android Build (Capacitor)
 # =============================================================================
 echo ""
-echo "[Phase 2] Building Flatpak..."
+echo "[Phase 2] Building Android (Capacitor)..."
+
+if command -v npx &> /dev/null && [[ -d "android" ]]; then
+    echo "  Syncing Capacitor..."
+    npx cap sync android
+
+    echo "  Building signed release APK + AAB..."
+    (cd android && ./gradlew assembleRelease bundleRelease) || echo "  Warning: Android build failed (check signing config)"
+
+    # Copy APK/AAB to releases (may be empty if build failed)
+    find android/app/build/outputs -name "*.apk" -not -name "*debug*" -exec cp {} "$RELEASES_DIR/android/" \; 2>/dev/null || true
+    find android/app/build/outputs -name "*.aab" -not -name "*debug*" -exec cp {} "$RELEASES_DIR/android/" \; 2>/dev/null || true
+
+    echo "  Android build complete."
+else
+    echo "  Skipping: npx not found or android/ directory missing"
+fi
+
+# =============================================================================
+# PHASE 3: Build Flatpak (Linux)
+# =============================================================================
+echo ""
+echo "[Phase 3] Building Flatpak..."
 
 if command -v flatpak-builder &> /dev/null && [[ -f "$FLATPAK_DIR/$APP_ID.dev.yml" ]]; then
     if [[ -f "src-tauri/target/release/$BINARY_NAME" ]]; then
@@ -99,10 +121,10 @@ else
 fi
 
 # =============================================================================
-# PHASE 3: Windows Build (Podman cross-compilation)
+# PHASE 4: Windows Build (Podman cross-compilation)
 # =============================================================================
 echo ""
-echo "[Phase 3] Windows Build (Podman)..."
+echo "[Phase 4] Windows Build (Podman)..."
 WIN_BUILDER="$PROJECT_ROOT/../_shared/builders/windows/build.sh"
 if [[ -f "$WIN_BUILDER" ]]; then
     "$WIN_BUILDER" "$APP_NAME" || true
@@ -111,21 +133,21 @@ else
 fi
 
 # =============================================================================
-# PHASE 4: macOS VM Build (macos-build) - also handles iOS
+# PHASE 5: macOS VM Build (macos-build) - also handles iOS
 # =============================================================================
 echo ""
-echo "[Phase 4] macOS VM Build..."
+echo "[Phase 5] macOS VM Build..."
 vm_build_tauri_macos "$APP_NAME" "$RELEASES_DIR/mac" "$PROJECT_ROOT" || true
 
 echo ""
-echo "[Phase 4b] iOS Build (via macOS VM)..."
+echo "[Phase 5b] iOS Build (via macOS VM)..."
 vm_build_ios "$APP_NAME" "$RELEASES_DIR/ios" "$PROJECT_ROOT" || true
 
 # =============================================================================
-# PHASE 5: Arch Linux Build (Podman)
+# PHASE 6: Arch Linux Build (Podman)
 # =============================================================================
 echo ""
-echo "[Phase 5] Arch Linux Build (Podman)..."
+echo "[Phase 6] Arch Linux Build (Podman)..."
 ARCH_BUILDER="$PROJECT_ROOT/../_shared/builders/arch/build.sh"
 if [[ -f "$ARCH_BUILDER" ]]; then
     "$ARCH_BUILDER" "$APP_NAME" || true
