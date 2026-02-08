@@ -54,3 +54,7 @@ yarn-error.log*
 # Temporary files
 *.tmp
 *.temp
+.claude/local.md
+
+# Flatpak build cache
+.flatpak-builder/

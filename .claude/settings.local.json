@@ -22,7 +22,24 @@
       "Bash(git init:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(xargs -I {} sh -c 'echo \"\"\"\"=== {} ===\"\"\"\"; head -50 {}')"
+      "Bash(xargs -I {} sh -c 'echo \"\"\"\"=== {} ===\"\"\"\"; head -50 {}')",
+      "Bash(keytool:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(node --check:*)",
+      "Bash(./gradlew :app:compileDebugJavaWithJavac:*)",
+      "Bash(npx cap copy:*)",
+      "WebFetch(domain:joplinapp.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:marked.js.org)",
+      "Bash(curl:*)",
+      "Bash(npm run tauri:dev:*)",
+      "Bash(timeout 8 npm start:*)",
+      "Bash(timeout 8 npx electron:*)",
+      "Bash(git checkout:*)",
+      "Bash(cargo check:*)",
+      "Bash(git status:*)"
     ]
   }
 }
