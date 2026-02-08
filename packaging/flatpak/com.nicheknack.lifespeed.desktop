@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Lifespeed
+GenericName=Journal
+Comment=Blazing-fast journaling app
+Exec=lifespeed %F
+Icon=com.nicheknack.lifespeed
+Terminal=false
+Type=Application
+Categories=Office;Utility;
+Keywords=journal;diary;notes;writing;personal;
+StartupNotify=true
+StartupWMClass=lifespeed

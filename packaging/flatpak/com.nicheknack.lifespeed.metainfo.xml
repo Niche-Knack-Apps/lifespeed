@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.nicheknack.lifespeed</id>
+  <name>Lifespeed</name>
+  <summary>Blazing-fast journaling app</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="com.nicheknack">
+    <name>Niche-Knack Apps</name>
+  </developer>
+  <description>
+    <p>Lifespeed is a fast, distraction-free journaling application for capturing your thoughts quickly.</p>
+    <p>Features include:</p>
+    <ul>
+      <li>Lightning-fast startup and entry</li>
+      <li>Date-based organization</li>
+      <li>Markdown support</li>
+      <li>Search through all entries</li>
+      <li>Export and backup options</li>
+    </ul>
+  </description>
+  <url type="homepage">https://niche-knack.com/apps/lifespeed</url>
+  <launchable type="desktop-id">com.nicheknack.lifespeed.desktop</launchable>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-01-01">
+      <description><p>Initial release</p></description>
+    </release>
+  </releases>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">400</display_length>
+  </requires>
+  <categories>
+    <category>Office</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>journal</keyword>
+    <keyword>diary</keyword>
+    <keyword>notes</keyword>
+    <keyword>writing</keyword>
+    <keyword>personal</keyword>
+  </keywords>
+</component>
