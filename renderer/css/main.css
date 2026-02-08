@@ -38,7 +38,7 @@
 }
 
 /* Dark theme (default) */
-:root, [data-theme="dark"] {
+[data-theme="dark"] {
     color-scheme: dark;
     --bg-primary: #1a1a1a;
     --bg-secondary: #242424;
@@ -53,7 +53,7 @@
 }
 
 [data-theme="light"] {
-    color-scheme: light;
+    color-scheme: light !important;
     --bg-primary: #ffffff;
     --bg-secondary: #f5f5f5;
     --bg-tertiary: #eeeeee;
@@ -67,6 +67,7 @@
 }
 
 [data-theme="sepia"] {
+    color-scheme: light;
     --bg-primary: #f4ecd8;
     --bg-secondary: #efe6d0;
     --bg-tertiary: #e8dfc7;
@@ -82,8 +83,24 @@
 }
 
 /* System theme (media query) */
+@media (prefers-color-scheme: dark) {
+    [data-theme="system"] {
+        color-scheme: dark;
+        --bg-primary: #1a1a1a;
+        --bg-secondary: #242424;
+        --bg-tertiary: #2d2d2d;
+        --bg-elevated: #333333;
+        --text-primary: #e0e0e0;
+        --text-secondary: #a0a0a0;
+        --text-muted: #666666;
+        --border-color: #3a3a3a;
+        --border-light: #444444;
+        --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+}
 @media (prefers-color-scheme: light) {
     [data-theme="system"] {
+        color-scheme: light;
         --bg-primary: #ffffff;
         --bg-secondary: #f5f5f5;
         --bg-tertiary: #eeeeee;

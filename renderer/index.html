@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -11,9 +11,14 @@
     <link rel="stylesheet" href="css/main.css">
     <style>
         /* Critical CSS inlined for instant render */
-        :root {
+        [data-theme="dark"] {
             --bg-primary: #1a1a1a;
             --text-primary: #e0e0e0;
+            --accent: #B08D57;
+        }
+        [data-theme="light"] {
+            --bg-primary: #ffffff;
+            --text-primary: #1a1a1a;
             --accent: #B08D57;
         }
         body {
