@@ -1,5 +1,5 @@
 /**
- * Mobile Gesture Handler for At the Speed of Life
+ * Mobile Gesture Handler for Lifespeed
  * Touch and swipe gesture support
  */
 

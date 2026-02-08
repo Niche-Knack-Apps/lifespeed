@@ -1,4 +1,4 @@
-package com.nicheknack.atthespeedoflife;
+package com.nicheknack.lifespeed;
 
 import android.app.Activity;
 import android.content.ContentResolver;
@@ -1032,18 +1032,15 @@ public class FolderPickerPlugin extends Plugin {
 
         try {
             Uri entryUri = Uri.parse(entryUriString);
-            DocumentFile entryDir = DocumentFile.fromTreeUri(getContext(), entryUri);
 
-            if (entryDir == null || !entryDir.exists()) {
-                JSObject ret = new JSObject();
-                ret.put("success", false);
-                ret.put("error", "Entry directory not found");
-                call.resolve(ret);
-                return;
-            }
+            // Use DocumentsContract.deleteDocument for proper SAF deletion
+            // This works for both tree URIs and document URIs from tree iteration
+            boolean deleted = DocumentsContract.deleteDocument(
+                getContext().getContentResolver(),
+                entryUri
+            );
 
-            // Delete the directory and all contents
-            boolean deleted = entryDir.delete();
+            logToJS("debug", "deleteEntry result: " + deleted);
 
             JSObject ret = new JSObject();
             ret.put("success", deleted);
@@ -1053,11 +1050,29 @@ public class FolderPickerPlugin extends Plugin {
             call.resolve(ret);
 
         } catch (Exception e) {
-            logToJS("error", "Error deleting entry: " + e.getMessage());
-            JSObject ret = new JSObject();
-            ret.put("success", false);
-            ret.put("error", e.getMessage());
-            call.resolve(ret);
+            String errorMsg = e.getMessage();
+            // Check if error is because file doesn't exist - treat as successful deletion
+            boolean fileNotFound = errorMsg != null && (
+                errorMsg.contains("FileNotFoundException") ||
+                errorMsg.contains("Missing file") ||
+                errorMsg.contains("No such file") ||
+                errorMsg.contains("does not exist") ||
+                e instanceof java.io.FileNotFoundException
+            );
+
+            if (fileNotFound) {
+                logToJS("debug", "deleteEntry: file not found, treating as success: " + errorMsg);
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("alreadyDeleted", true);
+                call.resolve(ret);
+            } else {
+                logToJS("error", "Error deleting entry: " + errorMsg);
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", errorMsg);
+                call.resolve(ret);
+            }
         }
     }
 

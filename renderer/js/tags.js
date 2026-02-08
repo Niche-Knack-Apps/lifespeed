@@ -1,5 +1,5 @@
 /**
- * Tags Management for At the Speed of Life
+ * Tags Management for Lifespeed
  * Tag index and autocomplete
  */
 

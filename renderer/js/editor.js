@@ -1,5 +1,5 @@
 /**
- * Editor Component for At the Speed of Life
+ * Editor Component for Lifespeed
  * Markdown editor utilities
  * Main implementation is in app.js - this file for future expansion
  */

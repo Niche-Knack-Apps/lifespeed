@@ -1,5 +1,5 @@
 /**
- * Frontmatter Parser for At the Speed of Life
+ * Frontmatter Parser for Lifespeed
  * Handles YAML frontmatter parsing and generation
  */
 

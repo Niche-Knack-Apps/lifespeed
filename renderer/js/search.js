@@ -1,5 +1,5 @@
 /**
- * Search Index for At the Speed of Life
+ * Search Index for Lifespeed
  * Manages search index building and querying
  */
 

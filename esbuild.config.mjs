@@ -1,5 +1,5 @@
 /**
- * esbuild configuration for At the Speed of Life
+ * esbuild configuration for Lifespeed
  *
  * Concatenates JS files in dependency order and minifies for production.
  *
@@ -44,7 +44,7 @@ async function build() {
     }
 
     // Read and concatenate all JS files
-    let concatenated = `// At the Speed of Life Bundle - Built ${new Date().toISOString()}\n`;
+    let concatenated = `// Lifespeed Bundle - Built ${new Date().toISOString()}\n`;
     concatenated += `// ${isProduction ? 'Production' : 'Development'} build\n\n`;
 
     for (const file of jsFiles) {

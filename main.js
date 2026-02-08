@@ -1,14 +1,22 @@
+// Enable V8 code caching for faster startup
+require('v8-compile-cache');
+
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const os = require('os');
 
+// Linux shared memory fix for Chromium
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('disable-dev-shm-usage');
+}
+
 // Set app name for Linux dock/dash icon
-app.setName('At the Speed of Life');
+app.setName('Lifespeed');
 
 // Set user data path
-const userDataPath = path.join(os.homedir(), '.config', 'at-the-speed-of-life');
+const userDataPath = path.join(os.homedir(), '.config', 'lifespeed');
 app.setPath('userData', userDataPath);
 
 let mainWindow;

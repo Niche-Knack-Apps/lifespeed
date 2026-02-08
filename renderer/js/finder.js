@@ -1,5 +1,5 @@
 /**
- * fzf-Style Finder for At the Speed of Life
+ * fzf-Style Finder for Lifespeed
  * Fuzzy finder overlay component
  * Main implementation is in app.js - this file for future expansion
  */

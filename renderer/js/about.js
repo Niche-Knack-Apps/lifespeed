@@ -1,5 +1,5 @@
 /**
- * About Section for At the Speed of Life
+ * About Section for Lifespeed
  * Niche-Knack branding and V4V links
  */
 
@@ -16,7 +16,7 @@ const about = {
     },
 
     // App info
-    name: 'At the Speed of Life',
+    name: 'Lifespeed',
     version: '1.0.0',
     description: 'A blazing-fast journaling app',
     brand: 'A Niche-Knack App'

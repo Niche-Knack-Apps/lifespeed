@@ -1,5 +1,5 @@
 /**
- * Image Handling for At the Speed of Life
+ * Image Handling for Lifespeed
  * Paste and drag-drop image support
  * Main implementation is in app.js - this file for future expansion
  */

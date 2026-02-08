@@ -1,5 +1,5 @@
 /**
- * File Attachments for At the Speed of Life
+ * File Attachments for Lifespeed
  * Non-image file attachment support
  */
 

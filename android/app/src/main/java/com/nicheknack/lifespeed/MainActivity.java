@@ -1,4 +1,4 @@
-package com.nicheknack.atthespeedoflife;
+package com.nicheknack.lifespeed;
 
 import android.os.Bundle;
 import android.os.Handler;

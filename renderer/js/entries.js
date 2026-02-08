@@ -1,5 +1,5 @@
 /**
- * Entry Management for At the Speed of Life
+ * Entry Management for Lifespeed
  * Additional entry utilities (to be expanded)
  */
 

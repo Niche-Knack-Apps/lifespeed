@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-    appId: 'com.nicheknack.atthespeedoflife',
-    appName: 'At the Speed of Life',
+    appId: 'com.nicheknack.lifespeed',
+    appName: 'Lifespeed',
     webDir: 'renderer',
     server: {
         androidScheme: 'https'

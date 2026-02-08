@@ -1,5 +1,5 @@
 /**
- * Settings Management for At the Speed of Life
+ * Settings Management for Lifespeed
  * Settings modal and persistence
  * Main implementation is in app.js - this file for future expansion
  */
