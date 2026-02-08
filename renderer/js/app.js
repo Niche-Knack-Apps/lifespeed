@@ -1823,12 +1823,12 @@ class App {
                     const elapsed = (performance.now() - startTime).toFixed(0);
                     console.log(`[App] Sidebar ready in ${elapsed}ms (from cache)`);
 
-                    // Backfill excerpts if missing (cache migration)
-                    const needsExcerpt = cachedEntries.some(e => !e.excerpt);
-                    if (needsExcerpt) {
-                        console.log('[App] Cache missing excerpts, backfilling...');
-                        this.backfillExcerpts(cachedEntries).catch(err => {
-                            console.error('[App] Excerpt backfill error:', err);
+                    // Backfill metadata if missing (cache migration or incomplete entries)
+                    const needsMetadata = cachedEntries.some(e => !e.excerpt || !e.title);
+                    if (needsMetadata) {
+                        console.log('[App] Cache missing metadata, backfilling...');
+                        this.backfillMetadata(cachedEntries).catch(err => {
+                            console.error('[App] Metadata backfill error:', err);
                         });
                     }
 
@@ -1862,8 +1862,14 @@ class App {
             const result = await platform.listEntries();
             if (!result.success) return;
 
-            this.allEntries = result.entries;
-            this.renderEntriesList(result.entries);
+            // listEntries returns only {dirname, path, mtime} — enrich with metadata
+            const metaResult = await platform.batchGetMetadata(result.entries);
+            if (metaResult.success && metaResult.entries) {
+                this.allEntries = metaResult.entries;
+            } else {
+                this.allEntries = result.entries;
+            }
+            this.renderEntriesList(this.allEntries);
         } catch (error) {
             console.error('[App] Failed to load entries directly:', error);
         }
@@ -2044,8 +2050,14 @@ class App {
             console.log('[App] Found', missingFromSidebar.length, 'entries on disk not in sidebar');
 
             if (missingFromSidebar.length > 0) {
+                // Read actual metadata from files instead of using dirname-derived placeholders
+                const metaResult = await platform.batchGetMetadata(missingFromSidebar);
+                const enriched = (metaResult.success && metaResult.entries) ? metaResult.entries : [];
+
+                // Use enriched entries where available, fall back to dirname-derived for failures
+                const enrichedMap = new Map(enriched.map(e => [e.path, e]));
                 for (const entry of missingFromSidebar) {
-                    const newEntry = {
+                    const newEntry = enrichedMap.get(entry.path) || {
                         path: entry.path,
                         dirname: entry.dirname,
                         entryUri: entry.entryUri,
@@ -2060,7 +2072,7 @@ class App {
                     }
                 }
                 changed = true;
-                console.log('[App] Added', missingFromSidebar.length, 'missing entries to sidebar');
+                console.log('[App] Added', missingFromSidebar.length, 'missing entries to sidebar (enriched:', enriched.length, ')');
             }
 
             // Re-render sidebar if anything changed
@@ -2079,11 +2091,11 @@ class App {
      * Backfill excerpts for cached entries that are missing them (cache migration).
      * Reads entry files in batches, updates cache, then re-renders sidebar.
      */
-    async backfillExcerpts(cachedEntries) {
-        const missing = cachedEntries.filter(e => !e.excerpt);
+    async backfillMetadata(cachedEntries) {
+        const missing = cachedEntries.filter(e => !e.excerpt || !e.title);
         if (missing.length === 0) return;
 
-        console.log('[App] Backfilling excerpts for', missing.length, 'entries');
+        console.log('[App] Backfilling metadata for', missing.length, 'entries');
         const BATCH = 50;
         let updated = 0;
 
@@ -2102,7 +2114,7 @@ class App {
         }
 
         if (updated > 0) {
-            console.log('[App] Backfilled', updated, 'excerpts, re-rendering sidebar');
+            console.log('[App] Backfilled', updated, 'entries with metadata, re-rendering sidebar');
             this.renderEntriesList(this.allEntries);
         }
     }
@@ -2136,9 +2148,13 @@ class App {
 
             console.log('[App] Quick sync - found', missing.length, 'missing entries, adding to sidebar');
 
-            // Add missing entries to allEntries and cache
+            // Read actual metadata from files
+            const metaResult = await platform.batchGetMetadata(missing);
+            const enriched = (metaResult.success && metaResult.entries) ? metaResult.entries : [];
+            const enrichedMap = new Map(enriched.map(e => [e.path, e]));
+
             for (const entry of missing) {
-                const newEntry = {
+                const newEntry = enrichedMap.get(entry.path) || {
                     path: entry.path,
                     dirname: entry.dirname,
                     entryUri: entry.entryUri,
@@ -2149,7 +2165,6 @@ class App {
 
                 this.allEntries.unshift(newEntry);
 
-                // Save to cache
                 if (window.metadataCache) {
                     await window.metadataCache.saveEntry(newEntry);
                 }
@@ -2157,7 +2172,7 @@ class App {
 
             // Re-render with the new entries
             this.renderEntriesList(this.allEntries);
-            console.log('[App] Quick sync - added', missing.length, 'entries, total now:', this.allEntries.length);
+            console.log('[App] Quick sync - added', missing.length, 'entries (enriched:', enriched.length, '), total now:', this.allEntries.length);
 
         } catch (error) {
             console.error('[App] Quick sync error:', error);
@@ -2759,6 +2774,33 @@ class App {
 
         console.log('[Finder] Using', sourceEntries.length, 'entries');
 
+        // Enrich entries that lack metadata (title, excerpt, tags)
+        const needsEnrichment = sourceEntries.filter(e => !e.excerpt || !e.title);
+        if (needsEnrichment.length > 0) {
+            console.log('[Finder] Enriching', needsEnrichment.length, 'entries missing metadata...');
+            const BATCH = 50;
+            for (let i = 0; i < needsEnrichment.length; i += BATCH) {
+                const batch = needsEnrichment.slice(i, i + BATCH);
+                const result = await platform.batchGetMetadata(batch);
+                if (result.success && result.entries) {
+                    for (const fresh of result.entries) {
+                        const idx = sourceEntries.findIndex(e => e.path === fresh.path);
+                        if (idx >= 0) sourceEntries[idx] = fresh;
+                    }
+                    // Also update sidebar entries and cache
+                    for (const fresh of result.entries) {
+                        const idx = this.allEntries?.findIndex(e => e.path === fresh.path);
+                        if (idx >= 0) this.allEntries[idx] = fresh;
+                    }
+                    await window.metadataCache?.saveEntries(result.entries);
+                }
+            }
+            // Re-render sidebar with enriched entries
+            if (this.allEntries?.length > 0) {
+                this.renderEntriesList(this.allEntries);
+            }
+        }
+
         this.finderEntries = [];
 
         for (const entry of sourceEntries) {
@@ -2776,8 +2818,6 @@ class App {
                 date = dateMatch ? dateMatch[1] : '';
             }
 
-            // Use cached excerpt as content (already trimmed to 300 chars)
-            // and cached tags - no need to load and parse files again
             const content = entry.excerpt || '';
             const tags = entry.tags || [];
 
