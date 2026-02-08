@@ -39,7 +39,9 @@
       "Bash(timeout 8 npx electron:*)",
       "Bash(git checkout:*)",
       "Bash(cargo check:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(tmux list-panes:*)",
+      "Bash(tmux kill-pane:*)"
     ]
   }
 }
