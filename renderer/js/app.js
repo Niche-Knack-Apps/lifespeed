@@ -386,10 +386,13 @@ class App {
 
     applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
+        // Cache in localStorage for instant apply on next launch (avoids Tauri IPC delay)
+        try { localStorage.setItem('lifespeed-theme', theme); } catch (e) {}
     }
 
     applyFontSize(size) {
         document.documentElement.setAttribute('data-font-size', size);
+        try { localStorage.setItem('lifespeed-font-size', size); } catch (e) {}
     }
 
     // ===== Editor =====
@@ -1820,6 +1823,15 @@ class App {
                     const elapsed = (performance.now() - startTime).toFixed(0);
                     console.log(`[App] Sidebar ready in ${elapsed}ms (from cache)`);
 
+                    // Backfill excerpts if missing (cache migration)
+                    const needsExcerpt = cachedEntries.some(e => !e.excerpt);
+                    if (needsExcerpt) {
+                        console.log('[App] Cache missing excerpts, backfilling...');
+                        this.backfillExcerpts(cachedEntries).catch(err => {
+                            console.error('[App] Excerpt backfill error:', err);
+                        });
+                    }
+
                     // CRITICAL: Always verify filesystem matches cache
                     // Filesystem is source of truth - cache is just for speed
                     console.log('[App] Starting filesystem verification...');
@@ -2064,6 +2076,38 @@ class App {
     }
 
     /**
+     * Backfill excerpts for cached entries that are missing them (cache migration).
+     * Reads entry files in batches, updates cache, then re-renders sidebar.
+     */
+    async backfillExcerpts(cachedEntries) {
+        const missing = cachedEntries.filter(e => !e.excerpt);
+        if (missing.length === 0) return;
+
+        console.log('[App] Backfilling excerpts for', missing.length, 'entries');
+        const BATCH = 50;
+        let updated = 0;
+
+        for (let i = 0; i < missing.length; i += BATCH) {
+            const batch = missing.slice(i, i + BATCH);
+            const result = await platform.batchGetMetadata(batch);
+            if (result.success && result.entries) {
+                await window.metadataCache?.saveEntries(result.entries);
+                // Update allEntries in-place
+                for (const fresh of result.entries) {
+                    const idx = this.allEntries.findIndex(e => e.path === fresh.path);
+                    if (idx >= 0) this.allEntries[idx] = fresh;
+                }
+                updated += result.entries.length;
+            }
+        }
+
+        if (updated > 0) {
+            console.log('[App] Backfilled', updated, 'excerpts, re-rendering sidebar');
+            this.renderEntriesList(this.allEntries);
+        }
+    }
+
+    /**
      * Quick sync to catch recent entries missing from cache
      * Runs in background after cache is loaded - doesn't block UI
      * Only checks filesystem entries, doesn't re-read content
@@ -2280,9 +2324,19 @@ class App {
         const dateMatch = entry.dirname?.match(/^(\d{4}-\d{2}-\d{2})/);
         const date = dateMatch ? dateMatch[1] : '';
 
+        // Extract first sentence from excerpt for preview
+        let preview = '';
+        if (entry.excerpt) {
+            const stripped = entry.excerpt.replace(/^#+\s+.*\n?/, '').trim();
+            const sentenceEnd = stripped.search(/[.!?]\s|[.!?]$/);
+            preview = sentenceEnd > 0 ? stripped.substring(0, sentenceEnd + 1) : stripped.substring(0, 80);
+            if (preview.length >= 80) preview = preview.substring(0, 80).trimEnd() + '...';
+        }
+
         item.innerHTML = `
             <div class="entry-info">
                 <div class="entry-title">${this.escapeHtml(title)}</div>
+                ${preview ? `<div class="entry-preview">${this.escapeHtml(preview)}</div>` : ''}
                 <div class="entry-date">${date}</div>
             </div>
             <button class="btn-delete-entry" aria-label="Delete entry">

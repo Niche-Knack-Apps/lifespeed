@@ -426,6 +426,9 @@
         </div>
     </div>
 
+    <!-- Apply cached theme IMMEDIATELY to avoid flash (Tauri IPC is async) -->
+    <script src="js/theme-cache.js"></script>
+
     <!-- Debug Logger (auto-initializes) -->
     <script src="js/debug-logger.js"></script>
 
