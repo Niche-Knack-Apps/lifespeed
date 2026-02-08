@@ -9,35 +9,35 @@ const NICHE_KNACK_CONFIG = {
   brand: {
     name: 'niche-knack apps',
     tagline: 'Cabinet of Curiosities for Software',
-    website: 'https://nicheknack.app',
-    email: 'hello@nicheknack.app'
+    website: 'https://niche-knack.app',
+    email: 'hello@niche-knack.app',
+    paymentPage: 'https://niche-knack.app/pay.html'
   },
 
   // Value for Value payment options
-  // Set enabled: false to hide an option, or update the address/url
   v4v: {
     lightning: {
       label: 'Bitcoin Lightning',
       description: 'Instant, low-fee payments',
-      address: 'YOUR_LIGHTNING_ADDRESS@getalby.com',  // <-- UPDATE THIS
+      address: 'niche-knack@getalby.com',
       enabled: true
     },
     bitcoin: {
       label: 'Bitcoin On-chain',
       description: 'For larger contributions',
-      address: 'YOUR_BTC_ADDRESS_HERE',  // <-- UPDATE THIS
+      address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
       enabled: true
     },
     kofi: {
       label: 'Ko-fi',
       description: 'Buy us a coffee',
-      url: 'https://ko-fi.com/YOUR_USERNAME',  // <-- UPDATE THIS
+      url: 'https://ko-fi.com/nicheknack',
       enabled: true
     },
     paypal: {
       label: 'PayPal',
       description: 'Traditional payment',
-      url: 'https://paypal.me/YOUR_USERNAME',  // <-- UPDATE THIS
+      url: 'https://paypal.me/nicheknack',
       enabled: true
     }
   }
