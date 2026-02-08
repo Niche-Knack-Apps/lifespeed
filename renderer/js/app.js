@@ -351,9 +351,14 @@ class App {
         const result = await platform.loadSettings();
         this.settings = result.settings || this.defaultSettings();
 
+        // Ensure entriesDirectory is always in this.settings so saveSettings() preserves it
+        const entriesDir = await platform.getEntriesDir();
+        if (entriesDir) {
+            this.settings.entriesDirectory = entriesDir;
+        }
+
         // Update settings UI
         if (this.dom.settingEntriesDir) {
-            const entriesDir = await platform.getEntriesDir();
             this.dom.settingEntriesDir.value = entriesDir;
         }
         if (this.dom.settingTheme) {
@@ -2943,11 +2948,13 @@ class App {
             this.dom.btnChooseDir.addEventListener('click', async () => {
                 const result = await platform.pickDirectory();
                 if (result.success) {
+                    const newDir = result.uri || result.path;
                     const displayPath = result.name || result.path || result.uri || 'Selected folder';
                     this.dom.settingEntriesDir.value = displayPath;
 
-                    // Store the URI/path
-                    await platform.setEntriesDir(result.uri || result.path);
+                    // Store the URI/path and keep this.settings in sync
+                    await platform.setEntriesDir(newDir);
+                    this.settings.entriesDirectory = newDir;
 
                     // Reload entries from new location (will trigger rebuild since folder changed)
                     await this.loadEntriesList();

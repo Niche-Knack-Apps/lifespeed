@@ -291,7 +291,11 @@ class PlatformService {
     async saveSettings(settings) {
         if (this.isTauri()) {
             try {
-                await this._saveSettingsTauri(settings);
+                // Merge with existing settings to preserve keys set by other code paths
+                // (e.g. entriesDirectory set by setEntriesDir)
+                const existing = await this._loadSettingsTauri();
+                const merged = { ...existing, ...settings };
+                await this._saveSettingsTauri(merged);
                 return { success: true };
             } catch (e) {
                 return { success: false, error: String(e) };
