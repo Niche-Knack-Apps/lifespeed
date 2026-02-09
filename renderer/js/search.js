@@ -3,6 +3,30 @@
  * Manages search index building and querying
  */
 
+const SEARCH_STOPWORDS = new Set([
+    'a', 'about', 'above', 'after', 'again', 'against', 'all', 'also', 'am', 'an',
+    'and', 'any', 'are', 'as', 'at', 'be', 'because', 'been', 'before', 'being',
+    'below', 'between', 'both', 'but', 'by', 'can', 'could', 'did', 'do', 'does',
+    'doing', 'done', 'down', 'during', 'each', 'even', 'every', 'few', 'for',
+    'from', 'further', 'get', 'gets', 'got', 'had', 'has', 'have', 'having', 'he',
+    'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'i', 'if',
+    'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'know', 'let', 'like',
+    'make', 'me', 'might', 'more', 'most', 'much', 'must', 'my', 'myself', 'no',
+    'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our',
+    'ours', 'ourselves', 'out', 'over', 'own', 'really', 'same', 'say', 'she',
+    'should', 'so', 'some', 'still', 'such', 'take', 'than', 'that', 'the',
+    'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these', 'they',
+    'thing', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up',
+    'upon', 'us', 'very', 'want', 'was', 'way', 'we', 'well', 'were', 'what',
+    'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with',
+    'would', 'you', 'your', 'yours', 'yourself', 'yourselves'
+]);
+
+function stripStopwords(text) {
+    if (!text) return '';
+    return text.split(/\s+/).filter(w => !SEARCH_STOPWORDS.has(w.toLowerCase().replace(/[^a-z]/g, ''))).join(' ');
+}
+
 const search = {
     index: null,
     fuse: null,
@@ -64,7 +88,7 @@ const search = {
                 date: parsed.data.date || '',
                 tags: parsed.data.tags || [],
                 excerpt: parsed.body.substring(0, 300),
-                content: parsed.body
+                content: stripStopwords(parsed.body)
             });
 
             // Count tags

@@ -4,7 +4,7 @@
  */
 
 // VERSION MARKER - if you see this in console, new code is loaded
-console.log('[App] CODE VERSION: 2026-02-06-v4-delete-logging');
+console.log('[App] CODE VERSION: 2026-02-08-metadata-fix');
 
 class App {
     constructor() {
@@ -163,12 +163,31 @@ class App {
         if (!this.currentEntry || !window.metadataCache) return;
 
         try {
+            // Preserve original date from frontmatter or currentEntry
+            const content = this.dom.editor?.value;
+            let originalDate;
+            if (content) {
+                const parsed = frontmatter.parse(content);
+                originalDate = parsed.data.date;
+            }
+            if (!originalDate) {
+                // Try to extract from dirname (e.g. 2025-02-09-13-43-51)
+                const dateMatch = this.currentEntry.dirname?.match(/^(\d{4}-\d{2}-\d{2})/);
+                originalDate = dateMatch ? dateMatch[1] : new Date().toISOString();
+            }
+
+            const tags = this.dom.metaTags?.value
+                ? this.dom.metaTags.value.split(',').map(t => t.trim()).filter(t => t)
+                : [];
+
             const entry = {
                 path: this.currentEntry.path,
                 dirname: this.currentEntry.dirname,
                 entryUri: this.currentEntry.entryUri,
                 title: this.dom.metaTitle?.value || 'Untitled',
-                date: new Date().toISOString(),
+                date: originalDate,
+                excerpt: this.getBodyExcerpt(),
+                tags,
                 mtime: Date.now()
             };
 
@@ -736,7 +755,9 @@ class App {
             this.dom.metaTitle.value = firstLine;
             this.dom.metaTitle.dataset.autoTitle = 'true';
             this.dom.headerTitle.textContent = firstLine;
-            this.updateSidebarEntryTitle(firstLine);
+            // Pass empty string — auto-title is from content, so sidebar should
+            // show excerpt snippet as title (not title + redundant preview)
+            this.updateSidebarEntry('');
         }
     }
 
@@ -876,12 +897,15 @@ class App {
                 this.isDraft = false;
                 // Add to sidebar and cache now that it's real
                 if (this.allEntries) {
+                    const tags = this.dom.metaTags.value.split(',').map(t => t.trim()).filter(t => t);
                     const newEntry = {
                         path: this.currentEntry.path,
                         dirname: this.currentEntry.dirname,
                         entryUri: this.currentEntry.entryUri,
                         title: this.dom.metaTitle.value.trim() || 'New Entry',
-                        date: new Date().toISOString(),
+                        date: parsed.data.date || new Date().toISOString(),
+                        excerpt: this.getBodyExcerpt(),
+                        tags,
                         mtime: Date.now()
                     };
                     this.allEntries.unshift(newEntry);
@@ -914,6 +938,32 @@ class App {
                 this.lastSavedContent = updatedContent;
                 this.updateWordCount(); // This now updates status automatically
 
+                // Update cache with current metadata (fire-and-forget for speed)
+                const tags = this.dom.metaTags.value.split(',').map(t => t.trim()).filter(t => t);
+                const excerpt = this.getBodyExcerpt();
+                const parsedForDate = frontmatter.parse(updatedContent);
+                const cacheEntry = {
+                    path: this.currentEntry.path,
+                    dirname: this.currentEntry.dirname,
+                    entryUri: this.currentEntry.entryUri,
+                    title: newTitle || 'Untitled',
+                    date: parsedForDate.data.date || this.currentEntry.date,
+                    excerpt,
+                    tags,
+                    mtime: Date.now()
+                };
+                // Update allEntries in-place
+                if (this.allEntries) {
+                    const idx = this.allEntries.findIndex(e => e.path === this.currentEntry.path);
+                    if (idx >= 0) {
+                        Object.assign(this.allEntries[idx], cacheEntry);
+                    }
+                }
+                // Fire-and-forget cache save
+                if (window.metadataCache) {
+                    window.metadataCache.saveEntry(cacheEntry);
+                }
+
                 // Check if we need to rename the entry directory
                 const currentSlug = this.extractSlugFromDirname(this.currentEntry.dirname);
                 const newSlug = frontmatter.slugify(newTitle);
@@ -940,6 +990,36 @@ class App {
     extractSlugFromDirname(dirname) {
         const match = dirname.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
         return match ? match[1] : '';
+    }
+
+    /**
+     * Extract clean plain-text excerpt from current editor content.
+     * Strips frontmatter, markdown syntax, collapses whitespace.
+     * Pure regex, no async — safe for beforeunload.
+     */
+    getBodyExcerpt(maxLen = 300) {
+        const content = this.dom.editor?.value;
+        if (!content) return '';
+        const parsed = frontmatter.parse(content);
+        const body = parsed.body.trim();
+        if (!body) return '';
+        const plain = body
+            .replace(/^#+\s+/gm, '')       // headings
+            .replace(/\*\*(.+?)\*\*/g, '$1') // bold
+            .replace(/\*(.+?)\*/g, '$1')     // italic
+            .replace(/~~(.+?)~~/g, '$1')     // strikethrough
+            .replace(/`(.+?)`/g, '$1')       // inline code
+            .replace(/!\[.*?\]\(.*?\)/g, '') // images
+            .replace(/\[(.+?)\]\(.*?\)/g, '$1') // links
+            .replace(/^>\s+/gm, '')          // blockquotes
+            .replace(/^- \[[ x]\]\s*/gmi, '') // checkboxes
+            .replace(/^[-*+]\s+/gm, '')      // unordered lists
+            .replace(/^\d+\.\s+/gm, '')      // ordered lists
+            .replace(/\n{2,}/g, ' ')         // collapse double newlines
+            .replace(/\n/g, ' ')             // remaining newlines
+            .replace(/\s{2,}/g, ' ')         // collapse spaces
+            .trim();
+        return plain.substring(0, maxLen);
     }
 
     async renameEntry(newTitle) {
@@ -1053,9 +1133,9 @@ class App {
         // Manual title edit - sync to source frontmatter and sidebar
         this.dom.metaTitle.addEventListener('input', () => {
             delete this.dom.metaTitle.dataset.autoTitle;
-            const title = this.dom.metaTitle.value || 'Untitled';
-            this.dom.headerTitle.textContent = title;
-            this.updateSidebarEntryTitle(title);
+            const title = this.dom.metaTitle.value.trim();
+            this.dom.headerTitle.textContent = title || 'Untitled';
+            this.updateSidebarEntry(title);
             this.syncMetadataToSource();
             this.scheduleAutoSave();
         });
@@ -1271,9 +1351,13 @@ class App {
         this.dom.editor.value = newContent;
     }
 
-    // Update the current entry's title in the sidebar
-    updateSidebarEntryTitle(title) {
+    // Update the current entry's title and preview in the sidebar
+    updateSidebarEntry(title) {
         if (!this.currentEntry) return;
+
+        const excerpt = this.getBodyExcerpt();
+        const excerptSnippet = excerpt ? excerpt.substring(0, 20).trim() : '';
+        const hasManualTitle = !!title;
 
         // Find entry item by iterating (safer than CSS selector with special chars in path)
         const entryItems = this.dom.entriesList.querySelectorAll('.entry-item');
@@ -1281,7 +1365,33 @@ class App {
             if (item.dataset.path === this.currentEntry.path) {
                 const titleEl = item.querySelector('.entry-title');
                 if (titleEl) {
-                    titleEl.textContent = title || 'Untitled';
+                    if (hasManualTitle) {
+                        titleEl.textContent = title;
+                    } else if (excerptSnippet) {
+                        titleEl.textContent = excerptSnippet + (excerpt.length > 20 ? '...' : '');
+                    } else {
+                        titleEl.textContent = 'Untitled';
+                    }
+                }
+
+                // Update or create preview element (only when manual title + excerpt)
+                let previewEl = item.querySelector('.entry-preview');
+                if (hasManualTitle && excerptSnippet) {
+                    const previewText = excerptSnippet + (excerpt.length > 20 ? '...' : '');
+                    if (!previewEl) {
+                        previewEl = document.createElement('div');
+                        previewEl.className = 'entry-preview';
+                        const infoEl = item.querySelector('.entry-info');
+                        const dateEl = infoEl?.querySelector('.entry-date');
+                        if (dateEl) {
+                            infoEl.insertBefore(previewEl, dateEl);
+                        } else {
+                            infoEl?.appendChild(previewEl);
+                        }
+                    }
+                    previewEl.textContent = previewText;
+                } else if (previewEl) {
+                    previewEl.remove();
                 }
                 break;
             }
@@ -1824,7 +1934,9 @@ class App {
                     console.log(`[App] Sidebar ready in ${elapsed}ms (from cache)`);
 
                     // Backfill metadata if missing (cache migration or incomplete entries)
-                    const needsMetadata = cachedEntries.some(e => !e.excerpt || !e.title);
+                    // Also detect stale timestamp-junk titles like "13 43 51"
+                    const isJunkTitle = (t) => t && /^\d{2}( \d{2}){1,2}$/.test(t);
+                    const needsMetadata = cachedEntries.some(e => !e.excerpt || !e.title || isJunkTitle(e.title));
                     if (needsMetadata) {
                         console.log('[App] Cache missing metadata, backfilling...');
                         this.backfillMetadata(cachedEntries).catch(err => {
@@ -2075,6 +2187,29 @@ class App {
                 console.log('[App] Added', missingFromSidebar.length, 'missing entries to sidebar (enriched:', enriched.length, ')');
             }
 
+            // STEP 3: Update existing sidebar entries with fresh metadata from disk
+            // (fixes stale cache entries that have empty title/excerpt)
+            const diskMap = new Map(diskEntries.map(e => [e.path, e]));
+            const isJunkTitle = (t) => t && /^\d{2}( \d{2}){1,2}$/.test(t);
+            for (const sidebarEntry of (this.allEntries || [])) {
+                const diskEntry = diskMap.get(sidebarEntry.path);
+                if (!diskEntry) continue;
+                // Update if disk has better metadata than sidebar
+                const sidebarStale = !sidebarEntry.excerpt || !sidebarEntry.title || isJunkTitle(sidebarEntry.title);
+                const diskHasData = diskEntry.title || diskEntry.excerpt;
+                if (sidebarStale && diskHasData) {
+                    if (diskEntry.title) sidebarEntry.title = diskEntry.title;
+                    if (diskEntry.excerpt) sidebarEntry.excerpt = diskEntry.excerpt;
+                    if (diskEntry.tags) sidebarEntry.tags = diskEntry.tags;
+                    if (diskEntry.date) sidebarEntry.date = diskEntry.date;
+                    if (diskEntry.mtime) sidebarEntry.mtime = diskEntry.mtime;
+                    if (window.metadataCache) {
+                        window.metadataCache.saveEntry(sidebarEntry);
+                    }
+                    changed = true;
+                }
+            }
+
             // Re-render sidebar if anything changed
             if (changed) {
                 this.renderEntriesList(this.allEntries);
@@ -2092,7 +2227,10 @@ class App {
      * Reads entry files in batches, updates cache, then re-renders sidebar.
      */
     async backfillMetadata(cachedEntries) {
-        const missing = cachedEntries.filter(e => !e.excerpt || !e.title);
+        // Detect entries needing backfill: missing excerpt, missing title, or
+        // stale timestamp-junk titles like "13 43 51" from old cache entries
+        const isJunkTitle = (t) => t && /^\d{2}( \d{2}){1,2}$/.test(t);
+        const missing = cachedEntries.filter(e => !e.excerpt || !e.title || isJunkTitle(e.title));
         if (missing.length === 0) return;
 
         console.log('[App] Backfilling metadata for', missing.length, 'entries');
@@ -2183,9 +2321,13 @@ class App {
      * Extract title from dirname (e.g., "2026-01-09-hello-world" -> "hello world")
      */
     extractTitleFromDirname(dirname) {
-        if (!dirname) return 'Untitled';
+        if (!dirname) return '';
         const match = dirname.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
-        return match ? match[1].replace(/-/g, ' ') : dirname;
+        if (!match) return '';
+        const slug = match[1];
+        // Pure timestamp slugs (e.g. "13-43-51") are not meaningful titles
+        if (/^\d{2}(-\d{2}){1,2}$/.test(slug)) return '';
+        return slug.replace(/-/g, ' ');
     }
 
     /**
@@ -2328,25 +2470,29 @@ class App {
         item.className = 'entry-item';
         item.dataset.path = entry.path;
 
-        // Use frontmatter title if available, otherwise extract from dirname
-        let title = entry.title;
-        if (!title) {
-            const titleMatch = entry.dirname?.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
-            title = titleMatch ? titleMatch[1].replace(/-/g, ' ') : (entry.dirname || 'Untitled');
+        // Title priority: frontmatter title → first 20 chars of excerpt → dirname fallback
+        const hasFrontmatterTitle = !!entry.title;
+        const excerptSnippet = entry.excerpt ? entry.excerpt.substring(0, 20).trim() : '';
+        let title;
+        if (hasFrontmatterTitle) {
+            title = entry.title;
+        } else if (excerptSnippet) {
+            title = excerptSnippet + (entry.excerpt.length > 20 ? '...' : '');
+        } else {
+            // Dirname fallback — extract slug or use full dirname
+            const slugMatch = entry.dirname?.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
+            title = slugMatch ? slugMatch[1].replace(/-/g, ' ') : (entry.dirname || 'Untitled');
+        }
+
+        // Preview: only shown when title is from frontmatter (distinct content to preview)
+        let preview = '';
+        if (hasFrontmatterTitle && excerptSnippet) {
+            preview = excerptSnippet + (entry.excerpt.length > 20 ? '...' : '');
         }
 
         // Extract date
         const dateMatch = entry.dirname?.match(/^(\d{4}-\d{2}-\d{2})/);
         const date = dateMatch ? dateMatch[1] : '';
-
-        // Extract first sentence from excerpt for preview
-        let preview = '';
-        if (entry.excerpt) {
-            const stripped = entry.excerpt.replace(/^#+\s+.*\n?/, '').trim();
-            const sentenceEnd = stripped.search(/[.!?]\s|[.!?]$/);
-            preview = sentenceEnd > 0 ? stripped.substring(0, sentenceEnd + 1) : stripped.substring(0, 80);
-            if (preview.length >= 80) preview = preview.substring(0, 80).trimEnd() + '...';
-        }
 
         item.innerHTML = `
             <div class="entry-info">
@@ -2653,7 +2799,8 @@ class App {
             const fallbackTitle = dirnameMatch ? dirnameMatch[1].replace(/-/g, ' ') : dirname;
             const title = frontmatterTitle || fallbackTitle;
             this.dom.headerTitle.textContent = title;
-            this.updateSidebarEntryTitle(title);
+            // Only pass frontmatter title — sidebar falls back to excerpt for non-titled entries
+            this.updateSidebarEntry(frontmatterTitle || '');
 
             // Highlight active entry in list
             this.dom.entriesList.querySelectorAll('.entry-item').forEach(item => {
@@ -2804,11 +2951,16 @@ class App {
         this.finderEntries = [];
 
         for (const entry of sourceEntries) {
-            // Use cached title or derive from dirname
+            // Use cached title, or excerpt snippet, or dirname slug as fallback
             let title = entry.title;
             if (!title) {
-                const titleMatch = entry.dirname?.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
-                title = titleMatch ? titleMatch[1].replace(/-/g, ' ') : (entry.dirname || 'Untitled');
+                if (entry.excerpt) {
+                    title = entry.excerpt.substring(0, 60).trim();
+                    if (entry.excerpt.length > 60) title += '...';
+                } else {
+                    const slugMatch = entry.dirname?.match(/^\d{4}-\d{2}-\d{2}-(.+)$/);
+                    title = slugMatch ? slugMatch[1].replace(/-/g, ' ') : (entry.dirname || 'Untitled');
+                }
             }
 
             // Use cached date or extract from dirname
@@ -2818,7 +2970,9 @@ class App {
                 date = dateMatch ? dateMatch[1] : '';
             }
 
-            const content = entry.excerpt || '';
+            const content = typeof stripStopwords === 'function'
+                ? stripStopwords(entry.excerpt || '')
+                : (entry.excerpt || '');
             const tags = entry.tags || [];
 
             this.finderEntries.push({

@@ -669,24 +669,63 @@ draft: false
     async _listEntriesTauri() {
         try {
             const basePath = await this.getEntriesDir();
+            console.log('[Platform] _listEntriesTauri basePath:', basePath);
+
+            // Try single-call command (returns entries with full metadata)
+            try {
+                const items = await this._invoke('list_entries_with_metadata', { path: basePath });
+                console.log('[Platform] list_entries_with_metadata returned', items?.length, 'items');
+                if (items?.length > 0) console.log('[Platform] Sample item:', JSON.stringify(items[0]));
+                const entries = items.map(item => ({
+                    dirname: item.dirname,
+                    path: item.path,
+                    mtime: new Date(item.mtime_ms).toISOString(),
+                    title: item.title,
+                    date: item.date,
+                    tags: item.tags,
+                    excerpt: item.excerpt
+                }));
+                console.log('[Platform] Tauri listEntries: got', entries.length, 'entries with metadata (single call)');
+                return { success: true, entries };
+            } catch (cmdErr) {
+                console.warn('[Platform] list_entries_with_metadata not available, falling back:', cmdErr);
+            }
+
+            // Fallback: list directories + check for index.md individually
             const items = await this._invoke('list_directory', { path: basePath });
             const entries = [];
-
             for (const item of items) {
                 if (item.is_dir) {
                     const indexPath = `${basePath}/${item.name}/index.md`;
                     const exists = await this._invoke('file_exists', { path: indexPath });
                     if (exists) {
+                        // Also read file to get metadata
+                        let title = '', date = '', tags = [], excerpt = '';
+                        try {
+                            const content = await this._invoke('read_file', { path: indexPath });
+                            const parsed = window.frontmatter?.parse(content);
+                            if (parsed && parsed.data) {
+                                title = parsed.data.title || '';
+                                date = parsed.data.date || '';
+                                tags = parsed.data.tags || [];
+                            }
+                            if (parsed && parsed.body) {
+                                excerpt = parsed.body.substring(0, 300);
+                            }
+                        } catch (readErr) {
+                            console.warn('[Platform] Failed to read metadata for:', item.name);
+                        }
                         entries.push({
                             dirname: item.name,
                             path: indexPath,
-                            mtime: new Date(item.mtime_ms).toISOString()
+                            mtime: new Date(item.mtime_ms).toISOString(),
+                            title, date, tags, excerpt
                         });
                     }
                 }
             }
-
             entries.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+            console.log('[Platform] Tauri listEntries: got', entries.length, 'entries with metadata (fallback)');
             return { success: true, entries };
         } catch (e) {
             console.error('[Platform] Tauri listEntries error:', e);
@@ -1082,6 +1121,21 @@ draft: false
             return { success: true, entries: [] };
         }
 
+        // Tauri: use list_entries_with_metadata (proven to return correct data)
+        // then filter to just the requested entries
+        if (this.isTauri()) {
+            try {
+                const allResult = await this._listEntriesTauri();
+                if (allResult.success && allResult.entries) {
+                    const requestedPaths = new Set(entries.map(e => e.path));
+                    const matched = allResult.entries.filter(e => requestedPaths.has(e.path));
+                    return { success: true, entries: matched };
+                }
+            } catch (e) {
+                console.warn('[Platform] Tauri batchGetMetadata error, using fallback:', e);
+            }
+        }
+
         if (this.isCapacitor()) {
             const plugins = await this._getCapacitorPlugins();
             if (plugins.FolderPicker) {
@@ -1120,6 +1174,23 @@ draft: false
                 const loadResult = await this.loadEntry(entry.path || entry.indexUri);
                 if (loadResult.success) {
                     const parsed = window.frontmatter?.parse(loadResult.content) || {};
+                    // Strip markdown syntax from excerpt for clean sidebar display
+                    const rawBody = (parsed.body || '').trim();
+                    const cleanExcerpt = rawBody
+                        .replace(/^#+\s+/gm, '')
+                        .replace(/\*\*(.+?)\*\*/g, '$1')
+                        .replace(/\*(.+?)\*/g, '$1')
+                        .replace(/`(.+?)`/g, '$1')
+                        .replace(/!\[.*?\]\(.*?\)/g, '')
+                        .replace(/\[(.+?)\]\(.*?\)/g, '$1')
+                        .replace(/^>\s+/gm, '')
+                        .replace(/^[-*+]\s+/gm, '')
+                        .replace(/^\d+\.\s+/gm, '')
+                        .replace(/\n{2,}/g, ' ')
+                        .replace(/\n/g, ' ')
+                        .replace(/\s{2,}/g, ' ')
+                        .trim()
+                        .substring(0, 300);
                     results.push({
                         path: entry.path || entry.indexUri,
                         dirname: entry.dirname,
@@ -1128,7 +1199,7 @@ draft: false
                         title: parsed.data?.title || '',
                         date: parsed.data?.date || '',
                         tags: parsed.data?.tags || [],
-                        excerpt: (parsed.body || '').substring(0, 300)
+                        excerpt: cleanExcerpt
                     });
                 }
             } catch (e) {
