@@ -41,7 +41,8 @@
       "Bash(cargo check:*)",
       "Bash(git status:*)",
       "Bash(tmux list-panes:*)",
-      "Bash(tmux kill-pane:*)"
+      "Bash(tmux kill-pane:*)",
+      "Bash(git branch:*)"
     ]
   }
 }

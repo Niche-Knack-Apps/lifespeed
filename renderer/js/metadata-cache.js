@@ -14,7 +14,7 @@
 class MetadataCache {
     constructor() {
         this.dbName = 'atsl-metadata';
-        this.dbVersion = 1;
+        this.dbVersion = 2;
         this.db = null;
         this.initialized = false;
     }
@@ -51,6 +51,18 @@ class MetadataCache {
 
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
+                const oldVersion = event.oldVersion;
+
+                // v1→v2: drop and recreate stores to clear stale entries without metadata
+                if (oldVersion >= 1 && oldVersion < 2) {
+                    if (db.objectStoreNames.contains('entries')) {
+                        db.deleteObjectStore('entries');
+                    }
+                    if (db.objectStoreNames.contains('meta')) {
+                        db.deleteObjectStore('meta');
+                    }
+                    console.log('[MetadataCache] Upgraded v1→v2: cleared stale cache');
+                }
 
                 // Create entries store
                 if (!db.objectStoreNames.contains('entries')) {

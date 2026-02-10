@@ -20,6 +20,7 @@ pub fn run() {
             commands::entry::rename_path,
             commands::entry::copy_file,
             commands::entry::write_file_base64,
+            commands::entry::list_entries_with_metadata,
             commands::dialog::open_file_dialog,
             commands::dialog::save_file_dialog,
             commands::dialog::choose_directory,
