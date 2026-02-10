@@ -206,7 +206,7 @@ Add a new "Journals" section to the existing Settings modal, placed above the cu
 
 #### "Add Journal" Flow
 1. User clicks "Add Journal Directory..."
-2. Native directory picker opens (Electron `dialog.showOpenDialog`, Tauri `dialog.open`, Capacitor filesystem API).
+2. Native directory picker opens (Tauri `dialog.open`, Capacitor filesystem API).
 3. Selected directory is scanned for existing `.md` files.
 4. If entries found: "Found 23 entries in this directory. Add as journal?"
 5. If empty: "This directory is empty. A new journal will be created here."

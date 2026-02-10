@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-10
 **Branch:** multi-journal
-**Baseline measurement:** 51ms launch-to-typing (Electron, warm cache)
+**Baseline measurement:** 51ms launch-to-typing (Tauri, warm cache)
 
 ---
 
@@ -34,7 +34,7 @@ DOMContentLoaded fires → new App() → app.init():
 
   STEP 1: cacheDOMReferences()          — ~0ms (getElementById calls, all sync)
   STEP 2: await loadSettings()          — ~1-5ms
-           └─ platform.loadSettings()   (Electron: IPC; Tauri: invoke; Web: localStorage)
+           └─ platform.loadSettings()   (Tauri: invoke; Web: localStorage)
            └─ platform.getEntriesDir()  (reads settings again for entries path)
   STEP 3: applyTheme() / applyFontSize() — ~0ms (setAttribute, redundant if theme-cache hit)
   STEP 4: initEditor()                  — ~0ms (event listeners + ScrollSync init)
@@ -43,7 +43,7 @@ DOMContentLoaded fires → new App() → app.init():
   STEP 7: initFinder()                  — ~0ms (event listeners)
   STEP 8: initSettingsModal()           — ~0ms (event listeners)
   STEP 9: initKeyboardShortcuts()       — ~0ms (event listeners)
-  STEP 10: setupFileWatcher()           — ~0ms (Electron only, IPC to main process)
+  STEP 10: setupFileWatcher()           — ~0ms (not yet implemented)
   STEP 11: await prepareDraftEntry()    — ~2-10ms
            └─ platform.getEntriesDir()  (reads settings, may be cached)
            └─ Constructs in-memory entry (NO disk write — isDraft=true)
@@ -120,7 +120,7 @@ DOMContentLoaded fires → new App() → app.init():
 
 ### File I/O
 - **Settings read:** 1-5ms per platform call (Tauri: 2 invokes for file_exists + read_file)
-- **Entry listing:** Tauri's `list_entries_with_metadata` is a single Rust call returning all entries with frontmatter parsed — very fast. Electron uses IPC. Capacitor uses SAF.
+- **Entry listing:** Tauri's `list_entries_with_metadata` is a single Rust call returning all entries with frontmatter parsed — very fast. Capacitor uses SAF.
 - **Entry load:** Single file read per entry (~1-5ms)
 - **Search index save/load:** JSON serialization to file (~10-50ms for large journals)
 

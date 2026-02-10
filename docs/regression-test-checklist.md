@@ -11,7 +11,7 @@
 |---|------|----------|--------|-------|
 | B1 | `npm run bundle` completes | Bundle at `renderer/dist/app.bundle.js` ~174KB, no errors | PASS | `esbuild.config.mjs` |
 | B2 | `npm run bundle:prod` completes | Minified bundle, no errors | - | `esbuild.config.mjs` |
-| B3 | `timeout 8 npm start` (Electron) | App launches, "Ready to type in <200ms" in logs | PASS (106ms) | `main.js`, `renderer/index.html` |
+| B3 | `npm run dev` (Tauri) | App launches, "Ready to type in <200ms" in logs | PASS | `src-tauri/`, `renderer/index.html` |
 | B4 | `cargo check --manifest-path src-tauri/Cargo.toml` | Compiles without errors | PASS | `src-tauri/src/lib.rs` |
 | B5 | All 14 JS files in `jsFiles` array exist | No "Warning: not found" during bundle | PASS | `esbuild.config.mjs` |
 
@@ -21,12 +21,12 @@
 
 | # | Test | Expected | Files |
 |---|------|----------|-------|
-| P1 | Electron detected via `window.api` | `platform.platform === 'electron'` | `renderer/js/platform.js:14-25` |
+| P1 | Tauri detected via `window.__TAURI_INTERNALS__` | `platform.platform === 'tauri'` | `renderer/js/platform.js:14-16` |
 | P2 | Tauri detected via `window.__TAURI_INTERNALS__` | `platform.platform === 'tauri'` | `renderer/js/platform.js:15-16` |
 | P3 | Capacitor detected via `window.Capacitor.isNativePlatform()` | `platform.platform === 'capacitor'` | `renderer/js/platform.js:21-23` |
 | P4 | Web fallback when no native API | `platform.platform === 'web'` | `renderer/js/platform.js:24` |
 | P5 | `platform.isMobile()` returns true on Capacitor or narrow viewport | Correct for < 768px width | `renderer/js/platform.js:45-47` |
-| P6 | `platform.isNative()` returns true for Electron/Tauri/Capacitor | `true` for all native platforms | `renderer/js/platform.js:31` |
+| P6 | `platform.isNative()` returns true for Tauri/Capacitor | `true` for all native platforms | `renderer/js/platform.js:28` |
 
 ---
 
@@ -53,7 +53,7 @@
 | R4 | Active entry highlighted in sidebar | `.entry-item.active` class applied to loaded entry | `renderer/js/app.js:2806-2808` |
 | R5 | Scroll resets to top on entry load | Both editor and preview scrollTop set to 0 | `renderer/js/app.js:2817-2821` |
 | R6 | Tauri: `read_file` command reads file content | Returns `{ success: true, content }` | `src-tauri/src/commands/file.rs:6-8` |
-| R7 | Electron: `window.api.loadEntry()` returns content | Returns `{ success: true, content }` | `renderer/js/platform.js:168-184` |
+| R7 | Tauri: `read_file` command reads file content | Returns `{ success: true, content }` | `src-tauri/src/commands/file.rs` |
 
 ### 2c. Update/Save Entry
 
@@ -66,7 +66,7 @@
 | U5 | Metadata cache updated on save (fire-and-forget) | `metadataCache.saveEntry()` called with updated fields | `renderer/js/app.js:941-965` |
 | U6 | Sidebar entry title/preview updates live during editing | `updateSidebarEntry()` reflects current title and excerpt | `renderer/js/app.js:1354-1398` |
 | U7 | Auto-title: first content line becomes title if title field empty | `metaTitle.value` auto-set, `dataset.autoTitle` flag present | `renderer/js/app.js:734-762` |
-| U8 | Entry rename on Electron when title changes | Directory renamed from old slug to new slug | `renderer/js/app.js:1025-1057` |
+| U8 | Entry rename on Tauri when title changes | Directory renamed from old slug to new slug | `renderer/js/app.js` (renameEntry) |
 | U9 | Empty entry discarded on app background/exit | `saveOrDiscardCurrentEntry()`: if no body content, entry deleted | `renderer/js/app.js:241-254` |
 | U10 | Tauri: `write_file` command creates parent dirs and writes | File saved, parent directories created | `src-tauri/src/commands/file.rs:10-16` |
 
@@ -75,7 +75,7 @@
 | # | Test | Expected | Files |
 |---|------|----------|-------|
 | D1 | Delete button on sidebar entry shows confirmation modal | `asyncConfirm()` dialog with "Delete" button | `renderer/js/app.js:2624-2639` |
-| D2 | Confirming delete removes entry from disk | Platform-specific delete: Tauri removes directory, Electron via API | `renderer/js/platform.js:199-223` |
+| D2 | Confirming delete removes entry from disk | Platform-specific delete: Tauri removes directory, Capacitor via SAF | `renderer/js/platform.js:199-223` |
 | D3 | Deleted entry removed from sidebar list | `allEntries` filtered, `renderEntriesList()` called | `renderer/js/app.js:2674-2678` |
 | D4 | Deleted entry removed from metadata cache | `metadataCache.deleteEntry(path)` called | `renderer/js/app.js:2682-2684` |
 | D5 | If current entry deleted, editor cleared | `currentEntry = null`, editor/preview/metadata fields cleared | `renderer/js/app.js:2660-2670` |
@@ -207,8 +207,8 @@
 |---|------|----------|-------|
 | I1 | Paste image in editor (clipboard) | Image saved to `{entry}/images/{timestamp}.png`, markdown inserted | `renderer/js/app.js:764-776` (handlePaste), `platform.js:227-240` |
 | I2 | Drop image on editor | Image file processed and saved | `renderer/js/app.js:778-788` (handleDrop) |
-| I3 | Pick image via context menu / file input | Native picker on Capacitor, HTML input on Electron/Web | `renderer/js/app.js:603-671` |
-| I4 | Relative image paths resolved in preview | `fixImagePaths()` uses `platform.readImage()` for Electron file://, Tauri asset:// | `renderer/js/app.js:1689-1717` |
+| I3 | Pick image via context menu / file input | Native picker on Capacitor, HTML input on Web | `renderer/js/app.js:603-671` |
+| I4 | Relative image paths resolved in preview | `fixImagePaths()` uses `platform.readImage()` for Tauri asset:// | `renderer/js/app.js:1689-1717` |
 | I5 | Image `data-originalSrc` preserved for roundtrip | When syncing preview->source, relative path restored | `renderer/js/app.js:1525-1534` |
 | I6 | File attachment (non-image) | File copied to `{entry}/files/{name}`, markdown link inserted | `renderer/js/app.js:708-732`, `platform.js:259-271` |
 | I7 | Tauri: `write_file_base64` decodes and writes binary | Base64 decoded, parent dirs created | `src-tauri/src/commands/entry.rs:88-105` |
@@ -229,7 +229,7 @@
 | ST7 | Directory chooser changes entries directory | Picker shown, `setEntriesDir()` called, entries reloaded | `renderer/js/app.js:3196-3217` |
 | ST8 | Rebuild index button triggers full re-index | Cache cleared, `buildInitialIndex()` called with progress UI | `renderer/js/app.js:3361-3373` |
 | ST9 | Tauri settings: merged save preserves all keys | `_saveSettingsTauri` merges with existing to preserve entriesDirectory | `renderer/js/platform.js:291-309` |
-| ST10 | Electron: settings via `window.api.loadSettings()` / `saveSettings()` | IPC to main process | `renderer/js/platform.js:284-309` |
+| ST10 | Tauri: settings via `_loadSettingsTauri()` / `_saveSettingsTauri()` | invoke read_file/write_file | `renderer/js/platform.js` |
 | ST11 | Web/Capacitor: settings in localStorage `atsl-settings` | JSON serialized to localStorage | `renderer/js/platform.js:571-605` |
 
 ---
@@ -247,11 +247,11 @@
 
 ---
 
-## 12. File Watcher (Electron only)
+## 12. File Watcher (not yet implemented)
 
 | # | Test | Expected | Files |
 |---|------|----------|-------|
-| FW1 | File watcher starts on Electron platform | `platform.setupFileWatcher()` called with callbacks | `renderer/js/platform.js:444-453` |
+| FW1 | File watcher is a no-op (not yet implemented) | `platform.setupFileWatcher()` does nothing | `renderer/js/platform.js` |
 | FW2 | File added/changed/deleted callbacks registered | Console logs show file events | `renderer/js/app.js:3429-3442` |
 | FW3 | Tauri: file watcher not implemented (no-op) | `setupFileWatcher()` returns immediately | `renderer/js/platform.js:446` |
 | FW4 | File watcher events don't trigger reload during use | Cache syncs on app close, not on every file event (speed priority) | `renderer/js/app.js:3431-3442` |
@@ -297,10 +297,10 @@
 |---|------|----------|-------|
 | DL1 | DebugLogger auto-initializes on load | `window.debugLogger` available, `init()` called | `renderer/js/debug-logger.js:568-572` |
 | DL2 | Console methods intercepted | `console.log/warn/error/info/debug` captured to logger | `renderer/js/debug-logger.js:408-424` |
-| DL3 | Logs stored in IndexedDB (Web/Capacitor) or file (Electron) | Platform-specific persistence | `renderer/js/debug-logger.js:429-445` |
+| DL3 | Logs stored in IndexedDB (all platforms) | Platform-specific persistence | `renderer/js/debug-logger.js:429-445` |
 | DL4 | Log rotation at 500 entries | Oldest entries deleted when exceeding `maxEntries` | `renderer/js/debug-logger.js:450-480` |
 | DL5 | Download logs exports as .log file | Platform-specific: Tauri save dialog, Capacitor share, Web blob | `renderer/js/debug-logger.js:190-249` |
-| DL6 | Clear logs wipes storage | IndexedDB store cleared or Electron file cleared | `renderer/js/debug-logger.js:305-319` |
+| DL6 | Clear logs wipes storage | IndexedDB store cleared | `renderer/js/debug-logger.js:305-319` |
 | DL7 | Settings modal shows log stats | Entry count, error/warn counts, size | `renderer/js/app.js:3262-3298` |
 
 ---
@@ -322,7 +322,7 @@
 |---|------|----------|-------|
 | BM1 | Tauri `batchGetMetadata` uses `list_entries_with_metadata` | Single Rust call returns all metadata, filtered to requested paths | `renderer/js/platform.js:1119-1137` |
 | BM2 | Capacitor `batchGetMetadata` uses native `FolderPicker.batchGetMetadata` | Native SAF batch read | `renderer/js/platform.js:1139-1167` |
-| BM3 | Electron/Web fallback reads entries individually | `loadEntry()` + `frontmatter.parse()` per entry | `renderer/js/platform.js:1170-1210` |
+| BM3 | Web fallback reads entries individually | `loadEntry()` + `frontmatter.parse()` per entry | `renderer/js/platform.js:1170-1210` |
 | BM4 | Excerpt stripped of markdown for clean sidebar display | Headings, bold, italic, code, images, links, blockquotes, lists stripped | `renderer/js/platform.js:1179-1193` |
 | BM5 | `listEntriesFast()` for cache comparison | Tauri delegates to `listEntries()`, Capacitor uses fast native call | `renderer/js/platform.js:1077-1112` |
 
@@ -367,8 +367,8 @@ Run after every change:
 # 1. Build
 npm run bundle
 
-# 2. Verify Electron launches
-timeout 8 npm start    # (or with --no-sandbox on Linux)
+# 2. Verify Tauri dev launches
+npm run dev
 # Expected: "Ready to type in <200ms", no console errors
 
 # 3. Verify Tauri compiles
@@ -392,7 +392,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 2. **Draft entry pattern** - New entry is memory-only until first content typed
 3. **Cache is speed layer, filesystem is truth** - `verifyFilesystemEntries()` always reconciles
 4. **Frontmatter roundtrip** - parse -> modify -> stringify must not corrupt content
-5. **Platform abstraction** - Every operation in PlatformService has Electron + Tauri + Capacitor + Web paths
+5. **Platform abstraction** - Every operation in PlatformService has Tauri + Capacitor + Web paths
 6. **Auto-save debounce** - 500ms delay, immediate on Ctrl+S or app background
 7. **Empty entry cleanup** - Entries with no body content are deleted on switch/exit
 8. **Metadata cache migration** - v1->v2 drops stale cache, junk titles detected and backfilled

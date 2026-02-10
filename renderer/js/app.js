@@ -46,15 +46,6 @@ class App {
         this.initSettingsModal();
         this.initKeyboardShortcuts();
 
-        // Setup file watcher for external changes
-        if (platform.isElectron()) {
-            platform.setupFileWatcher({
-                onAdded: (path) => this.onFileAdded(path),
-                onChanged: (path) => this.onFileChanged(path),
-                onDeleted: (path) => this.onFileDeleted(path)
-            });
-        }
-
         // SPEED: Prepare draft entry in memory ONLY (no disk write)
         // File is created on first auto-save when user actually types
         await this.prepareDraftEntry();
@@ -672,7 +663,7 @@ class App {
             }
         }
 
-        // Use HTML file input for Electron/Web
+        // Use HTML file input for Web
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = type === 'image' ? 'image/*' : '*/*';
@@ -987,7 +978,7 @@ class App {
                 const currentSlug = this.extractSlugFromDirname(this.currentEntry.dirname);
                 const newSlug = frontmatter.slugify(newTitle);
 
-                if (newTitle && newSlug && currentSlug !== newSlug && platform.isElectron()) {
+                if (newTitle && newSlug && currentSlug !== newSlug && platform.isTauri()) {
                     await this.renameEntry(newTitle);
                 }
             } else {
@@ -1042,10 +1033,20 @@ class App {
     }
 
     async renameEntry(newTitle) {
-        if (!this.currentEntry || !platform.isElectron()) return;
+        if (!this.currentEntry || !platform.isTauri()) return;
 
         try {
-            const result = await window.api.renameEntry(this.currentEntry.path, newTitle);
+            const oldPath = this.currentEntry.path;
+            const entryDir = oldPath.replace(/\/index\.md$/, '');
+            const parentDir = entryDir.substring(0, entryDir.lastIndexOf('/'));
+            const date = this.currentEntry.dirname.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || new Date().toISOString().slice(0, 10);
+            const newSlug = frontmatter.slugify(newTitle);
+            const newDirname = `${date}-${newSlug}`;
+            const newDir = `${parentDir}/${newDirname}`;
+            const newPath = `${newDir}/index.md`;
+
+            await platform._invoke('rename_path', { oldPath: entryDir, newPath: newDir });
+            const result = { success: true, path: newPath, dirname: newDirname };
             if (result.success) {
                 const oldPath = this.currentEntry.path;
                 this.currentEntry.path = result.path;
@@ -1176,7 +1177,7 @@ class App {
         }
     }
 
-    // Custom async prompt (native prompt() not supported in Tauri/Electron webview)
+    // Custom async prompt (native prompt() not supported in Tauri webview)
     asyncPrompt(message, defaultValue = '') {
         return new Promise((resolve) => {
             this.dom.promptMessage.textContent = message;
@@ -1221,7 +1222,7 @@ class App {
         });
     }
 
-    // Custom async confirm (native confirm() not supported in Tauri/Electron webview)
+    // Custom async confirm (native confirm() not supported in Tauri webview)
     asyncConfirm(message) {
         console.log('[App] asyncConfirm: opening modal with message:', message);
         return new Promise((resolve) => {

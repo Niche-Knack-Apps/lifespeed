@@ -1,6 +1,6 @@
 /**
  * Platform Abstraction Layer for Lifespeed
- * Detects and abstracts platform-specific functionality for Electron, Capacitor, and Web
+ * Detects and abstracts platform-specific functionality for Tauri, Capacitor, and Web
  */
 
 class PlatformService {
@@ -15,20 +15,16 @@ class PlatformService {
         if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
             return 'tauri';
         }
-        if (typeof window !== 'undefined' && window.api) {
-            return 'electron';
-        }
         if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform()) {
             return 'capacitor';
         }
         return 'web';
     }
 
-    isElectron() { return this.platform === 'electron'; }
     isTauri() { return this.platform === 'tauri'; }
     isCapacitor() { return this.platform === 'capacitor'; }
     isWeb() { return this.platform === 'web'; }
-    isNative() { return this.isElectron() || this.isTauri() || this.isCapacitor(); }
+    isNative() { return this.isTauri() || this.isCapacitor(); }
 
     async _invoke(cmd, args = {}) {
         return window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -102,8 +98,6 @@ class PlatformService {
                     return { success: false, error: e.message };
                 }
             }
-        } else if (this.isElectron()) {
-            return await window.api.chooseEntriesDir();
         }
         return { success: false, error: 'Directory picker not available' };
     }
@@ -119,9 +113,7 @@ class PlatformService {
                 return { success: false, error: String(e) };
             }
         }
-        if (this.isElectron()) {
-            return await window.api.setEntriesDir(uri);
-        } else {
+        {
             // Store in settings for Capacitor/Web
             const result = this._loadSettingsLocal();
             const settings = result.settings || {};
@@ -138,9 +130,7 @@ class PlatformService {
         if (this.isTauri()) {
             return await this._createEntryTauri(title);
         }
-        if (this.isElectron()) {
-            return await window.api.createEntry(title);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._createEntryCapacitor(title);
         } else {
             return await this._createEntryWeb(title);
@@ -156,9 +146,7 @@ class PlatformService {
                 return { success: false, error: String(e) };
             }
         }
-        if (this.isElectron()) {
-            return await window.api.saveEntry(path, content);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._saveEntryCapacitor(path, content);
         } else {
             return await this._saveEntryWeb(path, content);
@@ -174,9 +162,7 @@ class PlatformService {
                 return { success: false, error: String(e) };
             }
         }
-        if (this.isElectron()) {
-            return await window.api.loadEntry(path);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._loadEntryCapacitor(path);
         } else {
             return await this._loadEntryWeb(path);
@@ -187,9 +173,7 @@ class PlatformService {
         if (this.isTauri()) {
             return await this._listEntriesTauri();
         }
-        if (this.isElectron()) {
-            return await window.api.listEntries();
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._listEntriesCapacitor();
         } else {
             return await this._listEntriesWeb();
@@ -197,7 +181,7 @@ class PlatformService {
     }
 
     async deleteEntry(path, entryUri) {
-        console.log('[Platform] deleteEntry called:', { path, entryUri, isTauri: this.isTauri(), isElectron: this.isElectron(), isCapacitor: this.isCapacitor() });
+        console.log('[Platform] deleteEntry called:', { path, entryUri, isTauri: this.isTauri(), isCapacitor: this.isCapacitor() });
         if (this.isTauri()) {
             try {
                 const entryDir = path.replace(/\/index\.md$/, '');
@@ -210,10 +194,7 @@ class PlatformService {
                 return { success: false, error: String(e) };
             }
         }
-        if (this.isElectron()) {
-            console.log('[Platform] Electron deleteEntry');
-            return await window.api.deleteEntry(path);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             console.log('[Platform] Capacitor deleteEntry');
             return await this._deleteEntryCapacitor(path, entryUri);
         } else {
@@ -228,11 +209,7 @@ class PlatformService {
         if (this.isTauri()) {
             return await this._pasteImageTauri(base64Data, entry);
         }
-        if (this.isElectron()) {
-            // Electron expects the file path string
-            const entryPath = typeof entry === 'string' ? entry : entry.path;
-            return await window.api.pasteImage(base64Data, entryPath);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._pasteImageCapacitor(base64Data, entry);
         } else {
             return await this._pasteImageWeb(base64Data, entry);
@@ -243,10 +220,7 @@ class PlatformService {
         if (this.isTauri()) {
             return await this._copyImageTauri(sourcePath, entry);
         }
-        if (this.isElectron()) {
-            const entryPath = typeof entry === 'string' ? entry : entry.path;
-            return await window.api.copyImage(sourcePath, entryPath);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._copyImageCapacitor(sourcePath, entry);
         } else {
             // Web: read file as base64 and store
@@ -260,10 +234,7 @@ class PlatformService {
         if (this.isTauri()) {
             return await this._attachFileTauri(sourcePath, entry, filename);
         }
-        if (this.isElectron()) {
-            const entryPath = typeof entry === 'string' ? entry : entry.path;
-            return await window.api.attachFile(sourcePath, entryPath);
-        } else if (this.isCapacitor()) {
+        if (this.isCapacitor()) {
             return await this._attachFileCapacitor(sourcePath, entry, filename);
         } else {
             return await this._attachFileWeb(sourcePath, entry, filename);
@@ -281,9 +252,7 @@ class PlatformService {
                 return { success: true, settings: this._defaultSettings() };
             }
         }
-        if (this.isElectron()) {
-            return await window.api.loadSettings();
-        } else {
+        {
             return this._loadSettingsLocal();
         }
     }
@@ -301,9 +270,7 @@ class PlatformService {
                 return { success: false, error: String(e) };
             }
         }
-        if (this.isElectron()) {
-            return await window.api.saveSettings(settings);
-        } else {
+        {
             return this._saveSettingsLocal(settings);
         }
     }
@@ -322,9 +289,7 @@ class PlatformService {
             }
             return await this._invoke('get_default_entries_dir');
         }
-        if (this.isElectron()) {
-            return await window.api.getEntriesDir();
-        } else {
+        {
             const settings = this._loadSettingsLocal();
             // Use entriesDirectoryUri (set by SAF picker) or fall back to entriesDirectory
             return settings.settings?.entriesDirectoryUri || settings.settings?.entriesDirectory || 'journal';
@@ -353,9 +318,7 @@ class PlatformService {
             }
             return { success: true, index: null };
         }
-        if (this.isElectron()) {
-            return await window.api.loadIndex();
-        } else {
+        {
             return this._loadIndexLocal(journalId);
         }
     }
@@ -371,9 +334,7 @@ class PlatformService {
                 return { success: false, error: String(e) };
             }
         }
-        if (this.isElectron()) {
-            return await window.api.saveIndex(indexData);
-        } else {
+        {
             return this._saveIndexLocal(indexData, journalId);
         }
     }
@@ -386,12 +347,7 @@ class PlatformService {
             const basePath = entryPath.replace('/index.md', '');
             return { success: true, dataUrl: this._convertFileSrc(`${basePath}/${relativePath}`) };
         }
-        if (this.isElectron()) {
-            // Electron: construct file:// URL
-            const entryPath = typeof entry === 'string' ? entry : entry.path;
-            const basePath = entryPath.replace('/index.md', '');
-            return { success: true, dataUrl: `file://${basePath}/${relativePath}` };
-        } else if (this.isCapacitor() && entry && entry.entryUri) {
+        if (this.isCapacitor() && entry && entry.entryUri) {
             const plugins = await this._getCapacitorPlugins();
             if (plugins.FolderPicker) {
                 try {
@@ -451,14 +407,7 @@ class PlatformService {
     // ===== File Watcher =====
 
     setupFileWatcher(callbacks) {
-        // Tauri: file watching not yet implemented
-        if (this.isTauri()) return;
-        if (this.isElectron() && window.api) {
-            if (callbacks.onAdded) window.api.onFileAdded(callbacks.onAdded);
-            if (callbacks.onChanged) window.api.onFileChanged(callbacks.onChanged);
-            if (callbacks.onDeleted) window.api.onFileDeleted(callbacks.onDeleted);
-            window.api.startWatcher();
-        }
+        // File watching not yet implemented for Tauri/Capacitor/Web
     }
 
     // ===== Web/IndexedDB Fallbacks =====
@@ -1118,7 +1067,7 @@ draft: false
             }
         }
 
-        // Fallback to regular listEntries for Electron/Web
+        // Fallback to regular listEntries for Web
         return this.listEntries();
     }
 
@@ -1178,7 +1127,7 @@ draft: false
             }
         }
 
-        // Fallback for Electron/Web - load entries individually
+        // Fallback for Web - load entries individually
         const results = [];
         for (const entry of entries) {
             try {
@@ -1262,7 +1211,7 @@ draft: false
                 }
             }
         }
-        // Electron/Web: use HTML input (handled in app.js)
+        // Web: use HTML input (handled in app.js)
         return { success: false, error: 'Use HTML file input' };
     }
 
@@ -1279,7 +1228,7 @@ draft: false
                 }
             }
         }
-        // Electron/Web: use HTML input (handled in app.js)
+        // Web: use HTML input (handled in app.js)
         return { success: false, error: 'Use HTML file input' };
     }
 }

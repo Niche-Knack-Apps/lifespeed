@@ -5,10 +5,7 @@
 
 const files = {
     async attach(filePath, entryPath) {
-        if (platform.isElectron()) {
-            return await window.api.attachFile(filePath, entryPath);
-        }
-        // Web fallback - not fully supported
-        return { success: false, error: 'File attachments not supported in web mode' };
+        // File attachments handled via platform.attachFile()
+        return await platform.attachFile(filePath, entryPath);
     }
 };

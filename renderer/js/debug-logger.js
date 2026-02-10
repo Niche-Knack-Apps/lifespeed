@@ -3,8 +3,8 @@
  *
  * Features:
  * - Auto-intercepts console.log/warn/error/info/debug
- * - Platform detection (Electron vs Capacitor vs Web)
- * - IndexedDB storage (Capacitor/Web) or file storage (Electron via IPC)
+ * - Platform detection (Tauri vs Capacitor vs Web)
+ * - IndexedDB storage for all platforms
  * - Log rotation (FIFO when > maxEntries)
  * - Export as .log file with Web Share API on mobile
  * - Session tracking
@@ -35,8 +35,6 @@ class DebugLogger {
     this.db = null;
 
     // Platform detection
-    this.isElectron = typeof window !== 'undefined' &&
-                      typeof window.api !== 'undefined';
     this.isCapacitor = typeof window !== 'undefined' &&
                        typeof window.Capacitor !== 'undefined' &&
                        window.Capacitor.isNativePlatform?.();
@@ -62,8 +60,7 @@ class DebugLogger {
     if (this.initialized) return;
 
     try {
-      // Re-check platform detection (window.api may not have been ready at construction)
-      this.isElectron = typeof window !== 'undefined' && typeof window.api !== 'undefined';
+      // Re-check platform detection
       this.isCapacitor = typeof window !== 'undefined' &&
                          typeof window.Capacitor !== 'undefined' &&
                          window.Capacitor.isNativePlatform?.();
@@ -71,20 +68,13 @@ class DebugLogger {
                      typeof window.__TAURI_INTERNALS__ !== 'undefined';
 
       this._originalConsole.log('[DebugLogger] Platform detection:', {
-        isElectron: this.isElectron,
         isCapacitor: this.isCapacitor,
-        isTauri: this.isTauri,
-        hasApi: typeof window.api !== 'undefined',
-        hasAppendLog: typeof window.api?.appendLog === 'function'
+        isTauri: this.isTauri
       });
 
-      // Setup storage based on platform
-      if (this.isElectron) {
-        this._log('info', '[DebugLogger] Using Electron file storage');
-      } else {
-        await this._initIndexedDB();
-        this._log('info', '[DebugLogger] Using IndexedDB storage');
-      }
+      // Setup storage
+      await this._initIndexedDB();
+      this._log('info', '[DebugLogger] Using IndexedDB storage');
 
       // Intercept console methods
       if (this.config.enabled) {
@@ -149,10 +139,6 @@ class DebugLogger {
   async getLogs(options = {}) {
     const { limit = 1000, level = null, sessionId = null } = options;
 
-    if (this.isElectron && window.api?.getLogs) {
-      return await window.api.getLogs({ limit, level, sessionId });
-    }
-
     if (!this.db) return this.sessionLogs;
 
     return new Promise((resolve, reject) => {
@@ -194,10 +180,7 @@ class DebugLogger {
       const filename = `${this.config.appName.toLowerCase().replace(/\s+/g, '-')}-logs-${this._formatDate()}.log`;
 
       // Use platform-appropriate download method
-      if (this.isElectron && window.api?.saveLogFile) {
-        const result = await window.api.saveLogFile(content, filename);
-        return result;
-      } else if (this.isTauri) {
+      if (this.isTauri) {
         return await this._tauriDownload(content, filename);
       } else if (this.isCapacitor) {
         // Use Capacitor Filesystem to save, then share
@@ -305,9 +288,7 @@ class DebugLogger {
   async clearLogs() {
     this.sessionLogs = [];
 
-    if (this.isElectron && window.api?.clearLogs) {
-      await window.api.clearLogs();
-    } else if (this.db) {
+    if (this.db) {
       return new Promise((resolve, reject) => {
         const tx = this.db.transaction(this.config.storeName, 'readwrite');
         const store = tx.objectStore(this.config.storeName);
@@ -427,9 +408,7 @@ class DebugLogger {
    * Persist log entry to storage
    */
   async _persist(entry) {
-    if (this.isElectron && window.api?.appendLog) {
-      await window.api.appendLog(JSON.stringify(entry) + '\n');
-    } else if (this.db) {
+    if (this.db) {
       return new Promise((resolve, reject) => {
         const tx = this.db.transaction(this.config.storeName, 'readwrite');
         const store = tx.objectStore(this.config.storeName);
@@ -486,7 +465,6 @@ class DebugLogger {
   }
 
   _getPlatform() {
-    if (this.isElectron) return 'electron';
     if (this.isTauri) return 'tauri';
     if (this.isCapacitor) return window.Capacitor.getPlatform();
     return 'web';
