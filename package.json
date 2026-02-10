@@ -3,18 +3,15 @@
   "version": "1.0.0",
   "description": "A blazing-fast, mobile-first journaling app - launch to typing in milliseconds",
   "homepage": "https://nicheknack.app/lifespeed",
-  "main": "main.js",
   "scripts": {
-    "start": "electron . --ozone-platform-hint=auto --enable-features=WaylandWindowDecorations",
-    "start:wayland": "electron . --ozone-platform=wayland --enable-features=WaylandWindowDecorations",
-    "start:x11": "electron .",
     "bundle": "node esbuild.config.mjs",
     "bundle:prod": "NODE_ENV=production node esbuild.config.mjs",
-    "build": "npm run bundle:prod && electron-builder",
-    "build:linux": "npm run bundle:prod && electron-builder --linux AppImage deb",
-    "build:win": "npm run bundle:prod && electron-builder --win nsis portable",
-    "build:mac": "npm run bundle:prod && electron-builder --mac dmg zip",
-    "build:all-desktop": "npm run bundle:prod && electron-builder --linux AppImage deb --win nsis portable zip --mac dir",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "build:windows": "tauri build --target x86_64-pc-windows-msvc",
+    "build:mac": "tauri build --target x86_64-apple-darwin",
+    "build:release": "tauri build && ./scripts/copy-to-releases.sh",
     "cap:sync": "npm run bundle && npx cap sync",
     "cap:sync:android": "npm run bundle && npx cap sync android",
     "cap:sync:ios": "npm run bundle && npx cap sync ios",
@@ -25,20 +22,13 @@
     "build:ios": "npm run bundle:prod && npx cap sync ios",
     "dev:android": "npm run cap:sync:android && npx cap run android",
     "dev:ios": "npm run cap:sync:ios && npx cap run ios",
-    "build:all": "npm run build:all-desktop && npm run build:android",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
-    "tauri:build:linux": "tauri build --target x86_64-unknown-linux-gnu",
-    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc",
-    "tauri:build:mac": "tauri build --target x86_64-apple-darwin",
-    "tauri:build:release": "tauri build && ./scripts/copy-to-releases.sh"
+    "tauri": "tauri"
   },
   "keywords": [
     "journal",
     "diary",
     "markdown",
-    "electron",
+    "tauri",
     "mobile-first",
     "fast",
     "offline"
@@ -50,9 +40,6 @@
   "license": "Apache-2.0",
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "chokidar": "^3.6.0",
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1",
     "esbuild": "^0.24.2"
   },
   "dependencies": {
@@ -70,67 +57,6 @@
     "@tauri-apps/plugin-shell": "^2.0.0",
     "fuse.js": "^7.0.0",
     "js-yaml": "^4.1.0",
-    "marked": "^11.0.0",
-    "v8-compile-cache": "^2.4.0"
-  },
-  "build": {
-    "appId": "com.niche-knack.lifespeed",
-    "productName": "Lifespeed",
-    "copyright": "Copyright 2024 Niche-Knack",
-    "directories": {
-      "output": "../_shared/releases/lifespeed/electron/linux"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "icon.png",
-      "renderer/**/*",
-      "!renderer/node_modules",
-      "node_modules/chokidar/**",
-      "node_modules/anymatch/**",
-      "node_modules/is-binary-path/**",
-      "node_modules/binary-extensions/**",
-      "node_modules/braces/**",
-      "node_modules/fill-range/**",
-      "node_modules/to-regex-range/**",
-      "node_modules/is-number/**",
-      "node_modules/glob-parent/**",
-      "node_modules/is-glob/**",
-      "node_modules/is-extglob/**",
-      "node_modules/normalize-path/**",
-      "node_modules/picomatch/**",
-      "node_modules/readdirp/**"
-    ],
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Office",
-      "icon": "icon.png",
-      "maintainer": "Niche-Knack <contact@niche-knack.com>"
-    },
-    "mac": {
-      "target": [
-        "dir"
-      ],
-      "category": "public.app-category.productivity",
-      "icon": "icon.png"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable",
-        "zip"
-      ],
-      "icon": "icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    },
-    "compression": "maximum",
-    "asar": true,
-    "removePackageScripts": true
+    "marked": "^11.0.0"
   }
 }

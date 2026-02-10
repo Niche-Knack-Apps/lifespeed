@@ -34,15 +34,19 @@
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:marked.js.org)",
       "Bash(curl:*)",
-      "Bash(npm run tauri:dev:*)",
-      "Bash(timeout 8 npm start:*)",
-      "Bash(timeout 8 npx electron:*)",
+      "Bash(npm run dev:*)",
       "Bash(git checkout:*)",
       "Bash(cargo check:*)",
       "Bash(git status:*)",
       "Bash(tmux list-panes:*)",
       "Bash(tmux kill-pane:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "WebFetch(domain:thesweetsetup.com)",
+      "WebFetch(domain:dayoneapp.com)",
+      "WebFetch(domain:uxplanet.org)",
+      "WebFetch(domain:www.mobilespoon.net)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:www.breakfreegraphics.com)"
     ]
   }
 }
