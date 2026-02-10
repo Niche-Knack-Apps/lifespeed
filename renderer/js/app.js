@@ -4,7 +4,7 @@
  */
 
 // VERSION MARKER - if you see this in console, new code is loaded
-console.log('[App] CODE VERSION: 2026-02-08-metadata-fix');
+console.log('[App] CODE VERSION: 2026-02-10-multi-journal');
 
 class App {
     constructor() {
@@ -313,8 +313,7 @@ class App {
             // Settings modal
             settingsModal: document.getElementById('settings-modal'),
             settingsClose: document.getElementById('settings-close'),
-            settingEntriesDir: document.getElementById('setting-entries-dir'),
-            btnChooseDir: document.getElementById('btn-choose-dir'),
+            btnAddJournal: document.getElementById('btn-add-journal'),
             indexStatus: document.getElementById('index-status'),
             btnRebuildIndex: document.getElementById('btn-rebuild-index'),
             settingTheme: document.getElementById('setting-theme'),
@@ -370,16 +369,36 @@ class App {
         const result = await platform.loadSettings();
         this.settings = result.settings || this.defaultSettings();
 
-        // Ensure entriesDirectory is always in this.settings so saveSettings() preserves it
-        const entriesDir = await platform.getEntriesDir();
+        // Initialize journal manager from settings
+        journalManager.init(this.settings);
+
+        // Ensure entriesDirectory points to active journal path
+        const activeJournalPath = journalManager.getActiveJournalPath();
+        const entriesDir = activeJournalPath || await platform.getEntriesDir();
         if (entriesDir) {
             this.settings.entriesDirectory = entriesDir;
         }
 
-        // Update settings UI
-        if (this.dom.settingEntriesDir) {
-            this.dom.settingEntriesDir.value = entriesDir;
+        // If journal manager has no journals yet (fresh install), create default from resolved path
+        if (journalManager.getJournals().length === 0 && entriesDir) {
+            const name = entriesDir.split('/').filter(Boolean).pop() || 'Journal';
+            journalManager.journals = [{ id: 'default', name, path: entriesDir }];
+            journalManager.activeJournal = journalManager.journals[0];
         }
+
+        // If journals were auto-migrated, persist them
+        if (!this.settings.journals && journalManager.getJournals().length > 0) {
+            Object.assign(this.settings, journalManager.toSettingsData());
+            this.saveSettings();
+        }
+
+        // Switch metadata cache to active journal's DB (if not default)
+        const activeId = journalManager.getActiveJournalId();
+        if (activeId !== 'default' && window.metadataCache) {
+            await window.metadataCache.switchToJournal(activeId);
+        }
+
+        // Update settings UI
         if (this.dom.settingTheme) {
             this.dom.settingTheme.value = this.settings.theme;
         }
@@ -1831,7 +1850,169 @@ class App {
 
         // Initialize sort controls
         this.initSortControls();
+
+        // Initialize journal switcher
+        this.initJournalSwitcher();
     }
+
+    // ===== Journal Switcher =====
+
+    initJournalSwitcher() {
+        const switcher = document.getElementById('journal-switcher');
+        const dropdown = document.getElementById('journal-dropdown');
+        if (!switcher || !dropdown) return;
+
+        // Click journal name to toggle dropdown
+        switcher.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleJournalDropdown();
+        });
+
+        // Close dropdown on outside click
+        document.addEventListener('click', () => {
+            dropdown.classList.add('hidden');
+        });
+
+        // Prevent dropdown clicks from closing it
+        dropdown.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        // Initial UI update
+        this.updateJournalSwitcherUI();
+    }
+
+    toggleJournalDropdown() {
+        const dropdown = document.getElementById('journal-dropdown');
+        if (!dropdown) return;
+        dropdown.classList.toggle('hidden');
+        if (!dropdown.classList.contains('hidden')) {
+            this.renderJournalDropdown();
+        }
+    }
+
+    renderJournalDropdown() {
+        const list = document.getElementById('journal-dropdown-list');
+        if (!list) return;
+
+        const journals = journalManager.getJournals();
+        const activeId = journalManager.getActiveJournalId();
+
+        list.innerHTML = '';
+        for (const journal of journals) {
+            const item = document.createElement('button');
+            item.className = 'journal-dropdown-item' + (journal.id === activeId ? ' active' : '');
+            item.dataset.journalId = journal.id;
+
+            const name = document.createElement('span');
+            name.className = 'journal-dropdown-name';
+            name.textContent = journal.name;
+            item.appendChild(name);
+
+            item.addEventListener('click', () => {
+                this.switchJournal(journal.id);
+                document.getElementById('journal-dropdown').classList.add('hidden');
+                this.closeSidebar();
+            });
+
+            list.appendChild(item);
+        }
+
+        // Add "Add Journal..." action
+        const addItem = document.createElement('button');
+        addItem.className = 'journal-dropdown-item journal-dropdown-action';
+        addItem.textContent = '+ Add Journal...';
+        addItem.addEventListener('click', () => {
+            document.getElementById('journal-dropdown').classList.add('hidden');
+            this.addJournalViaDialog();
+        });
+        list.appendChild(addItem);
+
+        // Add "Manage Journals..." action
+        const manageItem = document.createElement('button');
+        manageItem.className = 'journal-dropdown-item journal-dropdown-action';
+        manageItem.textContent = 'Manage Journals...';
+        manageItem.addEventListener('click', () => {
+            document.getElementById('journal-dropdown').classList.add('hidden');
+            this.openSettings();
+        });
+        list.appendChild(manageItem);
+    }
+
+    updateJournalSwitcherUI() {
+        const nameEl = document.getElementById('journal-switcher-name');
+        if (nameEl) {
+            nameEl.textContent = journalManager.getActiveJournalName();
+        }
+        // Show/hide chevron based on journal count
+        const chevron = document.getElementById('journal-switcher-chevron');
+        if (chevron) {
+            chevron.style.display = journalManager.getJournals().length > 0 ? '' : 'none';
+        }
+    }
+
+    cycleNextJournal() {
+        const journals = journalManager.getJournals();
+        if (journals.length <= 1) return;
+        const activeId = journalManager.getActiveJournalId();
+        const currentIdx = journals.findIndex(j => j.id === activeId);
+        const nextIdx = (currentIdx + 1) % journals.length;
+        this.switchJournal(journals[nextIdx].id);
+    }
+
+    async addJournalViaDialog() {
+        const result = await platform.pickDirectory();
+        if (!result.success) return;
+
+        const dirPath = result.path || result.uri;
+        if (!dirPath) return;
+
+        // Get a default name from the directory basename
+        const segments = dirPath.split('/').filter(Boolean);
+        const defaultName = segments[segments.length - 1] || 'New Journal';
+
+        // Prompt for name
+        const name = await this.asyncPrompt('Journal name:', defaultName);
+        if (!name) return;
+
+        // Add to journal manager
+        const journal = journalManager.addJournal(name, dirPath);
+
+        // Persist to settings
+        Object.assign(this.settings, journalManager.toSettingsData());
+        await this.saveSettings();
+
+        // Pre-warm: build cache for the new journal in background
+        this.preWarmJournalCache(journal);
+
+        platform.showToast(`Journal "${name}" added`);
+        this.updateJournalSwitcherUI();
+        this.renderJournalSettingsSection();
+    }
+
+    /**
+     * Pre-warm cache for a newly added journal (background operation).
+     * Builds the metadata cache so switching to it later is instant.
+     */
+    async preWarmJournalCache(journal) {
+        try {
+            console.log('[App] Pre-warming cache for journal:', journal.id);
+            // Temporarily open the new journal's DB
+            const tempCache = new MetadataCache();
+            tempCache.dbName = journal.id === 'default' ? 'atsl-metadata' : `atsl-metadata-${journal.id}`;
+            await tempCache.init();
+
+            // Check if cache already exists
+            const hasCacheForFolder = await tempCache.hasCacheForFolder(journal.path);
+            if (!hasCacheForFolder) {
+                console.log('[App] No cache for new journal, will build on first switch');
+            }
+            tempCache.close();
+        } catch (e) {
+            console.warn('[App] Pre-warm cache error:', e);
+        }
+    }
+
 
     initSortControls() {
         if (this.dom.sortBy) {
@@ -2707,9 +2888,9 @@ class App {
      * The file is only created when the user types and auto-save triggers.
      * This prevents orphaned empty entries from accumulating on every app launch.
      */
-    async prepareDraftEntry() {
+    async prepareDraftEntry(basePath) {
         try {
-            const basePath = await platform.getEntriesDir();
+            if (!basePath) basePath = journalManager.getActiveJournalPath() || await platform.getEntriesDir();
             const now = new Date();
             const date = now.toISOString().slice(0, 10);
             const time = now.toTimeString().slice(0, 8).replace(/:/g, '-');
@@ -2756,6 +2937,61 @@ class App {
 
         // Focus current editor
         this.focusCurrentEditor();
+    }
+
+    /**
+     * Switch to a different journal.
+     * Follows the recommended switch flow from the performance doc:
+     * 1. Save/discard current entry
+     * 2-4. JournalManager handles cache swap
+     * 5. Prepare draft entry in new journal
+     * 6. Focus editor (TYPEABLE)
+     * 7-8. Background: reload entries list, lazy search index
+     */
+    async switchJournal(journalId) {
+        if (journalId === journalManager.getActiveJournalId()) return;
+
+        const startTime = performance.now();
+        console.log('[App] Switching journal to:', journalId);
+
+        // Step 1: Save or discard current entry
+        await this.saveOrDiscardCurrentEntry();
+
+        // Steps 2-4: JournalManager closes old cache, opens new one
+        const journal = await journalManager.switchJournal(journalId);
+        if (!journal) return;
+
+        // Update settings in memory (NOT saved to disk yet — keep switch fast)
+        this.settings.entriesDirectory = journal.path;
+        Object.assign(this.settings, journalManager.toSettingsData());
+
+        // Step 5: Prepare new draft entry in the new journal
+        await this.prepareDraftEntry(journal.path);
+
+        // Step 6: Focus editor — TYPEABLE
+        this.focusCurrentEditor();
+
+        const elapsed = (performance.now() - startTime).toFixed(0);
+        console.log(`[App] Journal switch complete in ${elapsed}ms`);
+
+        // Update journal switcher UI
+        this.updateJournalSwitcherUI();
+
+        // Step 7: Reload entries list in background
+        this.allEntries = [];
+        this.renderEntriesList([]);
+        this.loadEntriesList().then(async () => {
+            await this.ensureCurrentEntryInSidebar();
+        }).catch(err => {
+            console.error('[App] Error loading entries after journal switch:', err);
+        });
+
+        // Clear finder cache (search will lazy-load on next open)
+        this.finderEntries = [];
+        this.fuse = null;
+
+        // Persist settings in background
+        this.saveSettings();
     }
 
     async loadEntry(path, dirname, entryUri) {
@@ -3191,30 +3427,8 @@ class App {
         this.dom.settingsClose.addEventListener('click', () => this.closeSettings());
         this.dom.settingsModal.querySelector('.modal-backdrop').addEventListener('click', () => this.closeSettings());
 
-        // Directory chooser (works on both Electron and Capacitor/Android)
-        if (this.dom.btnChooseDir) {
-            this.dom.btnChooseDir.addEventListener('click', async () => {
-                const result = await platform.pickDirectory();
-                if (result.success) {
-                    const newDir = result.uri || result.path;
-                    const displayPath = result.name || result.path || result.uri || 'Selected folder';
-                    this.dom.settingEntriesDir.value = displayPath;
-
-                    // Store the URI/path and keep this.settings in sync
-                    await platform.setEntriesDir(newDir);
-                    this.settings.entriesDirectory = newDir;
-
-                    // Reload entries from new location (will trigger rebuild since folder changed)
-                    await this.loadEntriesList();
-
-                    // Clear finder cache
-                    this.finderEntries = [];
-                    this.fuse = null;
-
-                    platform.showToast('Journal folder updated');
-                }
-            });
-        }
+        // Render journal settings section
+        this.renderJournalSettingsSection();
 
         // Rebuild index button
         if (this.dom.btnRebuildIndex) {
@@ -3223,6 +3437,14 @@ class App {
                     this.closeSettings();
                     await this.rebuildIndex();
                 }
+            });
+        }
+
+        // Add Journal button in settings
+        if (this.dom.btnAddJournal) {
+            this.dom.btnAddJournal.addEventListener('click', () => {
+                this.closeSettings();
+                this.addJournalViaDialog();
             });
         }
 
@@ -3246,6 +3468,78 @@ class App {
         }
         if (this.dom.clearLogsBtn) {
             this.dom.clearLogsBtn.addEventListener('click', () => this.clearLogs());
+        }
+    }
+
+    // ===== Journal Settings =====
+
+    renderJournalSettingsSection() {
+        const container = document.getElementById('journal-settings-list');
+        if (!container) return;
+
+        const journals = journalManager.getJournals();
+        const activeId = journalManager.getActiveJournalId();
+        container.innerHTML = '';
+
+        for (const journal of journals) {
+            const item = document.createElement('div');
+            item.className = 'journal-setting-item' + (journal.id === activeId ? ' active' : '');
+
+            const info = document.createElement('div');
+            info.className = 'journal-setting-info';
+
+            const name = document.createElement('span');
+            name.className = 'journal-setting-name';
+            name.textContent = journal.name;
+            info.appendChild(name);
+
+            const path = document.createElement('small');
+            path.className = 'journal-setting-path';
+            path.textContent = journal.path;
+            info.appendChild(path);
+
+            item.appendChild(info);
+
+            const actions = document.createElement('div');
+            actions.className = 'journal-setting-actions';
+
+            // Rename button
+            const renameBtn = document.createElement('button');
+            renameBtn.className = 'btn-link';
+            renameBtn.textContent = 'Rename';
+            renameBtn.addEventListener('click', async () => {
+                const newName = await this.asyncPrompt('Rename journal:', journal.name);
+                if (newName && newName !== journal.name) {
+                    journalManager.renameJournal(journal.id, newName);
+                    Object.assign(this.settings, journalManager.toSettingsData());
+                    await this.saveSettings();
+                    this.renderJournalSettingsSection();
+                    this.updateJournalSwitcherUI();
+                }
+            });
+            actions.appendChild(renameBtn);
+
+            // Remove button (hidden if only one journal or if active)
+            if (journals.length > 1 && journal.id !== activeId) {
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn-link btn-link-danger';
+                removeBtn.textContent = 'Remove';
+                removeBtn.addEventListener('click', async () => {
+                    const ok = await this.asyncConfirm(`Remove "${journal.name}" from Lifespeed? Your files will not be deleted.`);
+                    if (ok) {
+                        journalManager.removeJournal(journal.id);
+                        Object.assign(this.settings, journalManager.toSettingsData());
+                        await this.saveSettings();
+                        this.renderJournalSettingsSection();
+                        this.updateJournalSwitcherUI();
+                        platform.showToast(`"${journal.name}" removed`);
+                    }
+                });
+                actions.appendChild(removeBtn);
+            }
+
+            item.appendChild(actions);
+            container.appendChild(item);
         }
     }
 
@@ -3334,6 +3628,7 @@ class App {
 
     openSettings() {
         this.dom.settingsModal.classList.remove('hidden');
+        this.renderJournalSettingsSection();
         this.updateDebugLogStats();
         this.updateIndexStatus();
     }
@@ -3379,6 +3674,14 @@ class App {
             // Global shortcuts
             if (e.ctrlKey || e.metaKey) {
                 switch (e.key.toLowerCase()) {
+                    case 'j':
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                            this.cycleNextJournal();
+                        } else {
+                            this.toggleJournalDropdown();
+                        }
+                        break;
                     case 'k':
                     case 'p':
                         if (!e.shiftKey) {
@@ -3413,9 +3716,12 @@ class App {
                 }
             }
 
-            // Escape to close modals
+            // Escape to close modals/dropdowns
             if (e.key === 'Escape') {
-                if (!this.dom.finder.classList.contains('hidden')) {
+                const dropdown = document.getElementById('journal-dropdown');
+                if (dropdown && !dropdown.classList.contains('hidden')) {
+                    dropdown.classList.add('hidden');
+                } else if (!this.dom.finder.classList.contains('hidden')) {
                     this.closeFinder();
                 } else if (!this.dom.settingsModal.classList.contains('hidden')) {
                     this.closeSettings();

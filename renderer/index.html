@@ -82,16 +82,29 @@
             <!-- Sidebar (Entries List) -->
             <aside id="sidebar" class="sidebar">
                 <div class="sidebar-header">
-                    <h2>Entries</h2>
-                    <div class="sort-controls">
-                        <select id="sort-by" class="sort-select" title="Sort by">
-                            <option value="date-desc">Newest</option>
-                            <option value="date-asc">Oldest</option>
-                            <option value="modified-desc">Modified</option>
-                            <option value="modified-asc">Mod. Old</option>
-                            <option value="title-asc">A-Z</option>
-                            <option value="title-desc">Z-A</option>
-                        </select>
+                    <div class="journal-switcher-row">
+                        <button id="journal-switcher" class="journal-switcher" title="Switch journal (Ctrl+J)">
+                            <span id="journal-switcher-name" class="journal-switcher-name">Journal</span>
+                            <svg id="journal-switcher-chevron" class="journal-switcher-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </button>
+                        <div class="sort-controls">
+                            <select id="sort-by" class="sort-select" title="Sort by">
+                                <option value="date-desc">Newest</option>
+                                <option value="date-asc">Oldest</option>
+                                <option value="modified-desc">Modified</option>
+                                <option value="modified-asc">Mod. Old</option>
+                                <option value="title-asc">A-Z</option>
+                                <option value="title-desc">Z-A</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Journal dropdown (hidden by default) -->
+                    <div id="journal-dropdown" class="journal-dropdown hidden">
+                        <div id="journal-dropdown-list" class="journal-dropdown-list">
+                            <!-- Populated by JS -->
+                        </div>
                     </div>
                 </div>
                 <div id="entries-list" class="entries-list">
@@ -226,17 +239,14 @@
                 </button>
             </div>
             <div class="modal-body">
-                <!-- Storage Section -->
+                <!-- Journals Section -->
                 <section class="settings-section">
-                    <h3>Storage</h3>
-                    <div class="setting-item">
-                        <label for="setting-entries-dir">Journal Directory</label>
-                        <div class="setting-input-group">
-                            <input type="text" id="setting-entries-dir" readonly>
-                            <button id="btn-choose-dir" class="btn-secondary">Choose...</button>
-                        </div>
+                    <h3>Journals</h3>
+                    <div id="journal-settings-list" class="journal-settings-list">
+                        <!-- Populated by JS -->
                     </div>
-                    <div class="setting-item">
+                    <button id="btn-add-journal" class="btn-secondary btn-add-journal">+ Add Journal Directory...</button>
+                    <div class="setting-item" style="margin-top: var(--space-md);">
                         <label>Search Index</label>
                         <div class="setting-input-group">
                             <span id="index-status" class="index-status">Checking...</span>

@@ -46,7 +46,8 @@
       "WebFetch(domain:uxplanet.org)",
       "WebFetch(domain:www.mobilespoon.net)",
       "WebFetch(domain:medium.com)",
-      "WebFetch(domain:www.breakfreegraphics.com)"
+      "WebFetch(domain:www.breakfreegraphics.com)",
+      "Bash(node -c:*)"
     ]
   }
 }

@@ -409,6 +409,31 @@ class MetadataCache {
                    dirname.includes(q);
         });
     }
+
+    /**
+     * Close the current database connection
+     */
+    close() {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+        this.initialized = false;
+    }
+
+    /**
+     * Switch to a different journal's database
+     * Closes current DB and opens the journal-specific one.
+     * Default journal uses 'atsl-metadata' for backward compat.
+     * @param {string} journalId - Journal identifier
+     * @returns {Promise<boolean>}
+     */
+    async switchToJournal(journalId) {
+        this.close();
+        this.dbName = journalId === 'default' ? 'atsl-metadata' : `atsl-metadata-${journalId}`;
+        console.log(`[MetadataCache] Switching to journal DB: ${this.dbName}`);
+        return await this.init();
+    }
 }
 
 // Global instance

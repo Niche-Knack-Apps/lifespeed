@@ -1,6 +1,7 @@
 /**
  * Search Index for Lifespeed
  * Manages search index building and querying
+ * Supports per-journal indexes via journalId
  */
 
 const SEARCH_STOPWORDS = new Set([
@@ -30,9 +31,11 @@ function stripStopwords(text) {
 const search = {
     index: null,
     fuse: null,
+    currentJournalId: null,
 
-    async init() {
-        const result = await platform.loadIndex();
+    async init(journalId) {
+        this.currentJournalId = journalId || null;
+        const result = await platform.loadIndex(journalId);
         if (result.success && result.index) {
             this.index = result.index;
             this.initFuse();
@@ -64,8 +67,8 @@ const search = {
         return this.fuse.search(query);
     },
 
-    async rebuildIndex() {
-        // TODO: Implement full index rebuild
+    async rebuildIndex(journalId) {
+        const jid = journalId || this.currentJournalId;
         const entries = await platform.listEntries();
         if (!entries.success) return;
 
@@ -97,7 +100,17 @@ const search = {
             }
         }
 
-        await platform.saveIndex(this.index);
+        await platform.saveIndex(this.index, jid);
         this.initFuse();
+    },
+
+    /**
+     * Reset search state (used when switching journals)
+     * Index will be lazy-loaded on next search
+     */
+    reset() {
+        this.index = null;
+        this.fuse = null;
+        this.currentJournalId = null;
     }
 };

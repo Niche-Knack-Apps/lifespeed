@@ -309,6 +309,10 @@ class PlatformService {
     }
 
     async getEntriesDir() {
+        // Fast path: if journalManager has an active journal, use it directly (no disk read)
+        if (typeof journalManager !== 'undefined' && journalManager.getActiveJournalPath()) {
+            return journalManager.getActiveJournalPath();
+        }
         if (this.isTauri()) {
             try {
                 const settings = await this._loadSettingsTauri();
@@ -329,11 +333,16 @@ class PlatformService {
 
     // ===== Search Index =====
 
-    async loadIndex() {
+    _indexFileName(journalId) {
+        const suffix = journalId && journalId !== 'default' ? `-${journalId}` : '';
+        return `search-index${suffix}.json`;
+    }
+
+    async loadIndex(journalId) {
         if (this.isTauri()) {
             try {
                 const userDataDir = await this._invoke('get_user_data_path');
-                const indexPath = userDataDir + '/search-index.json';
+                const indexPath = userDataDir + '/' + this._indexFileName(journalId);
                 const exists = await this._invoke('file_exists', { path: indexPath });
                 if (exists) {
                     const content = await this._invoke('read_file', { path: indexPath });
@@ -347,15 +356,15 @@ class PlatformService {
         if (this.isElectron()) {
             return await window.api.loadIndex();
         } else {
-            return this._loadIndexLocal();
+            return this._loadIndexLocal(journalId);
         }
     }
 
-    async saveIndex(indexData) {
+    async saveIndex(indexData, journalId) {
         if (this.isTauri()) {
             try {
                 const userDataDir = await this._invoke('get_user_data_path');
-                const indexPath = userDataDir + '/search-index.json';
+                const indexPath = userDataDir + '/' + this._indexFileName(journalId);
                 await this._invoke('write_file', { path: indexPath, content: JSON.stringify(indexData) });
                 return { success: true };
             } catch (e) {
@@ -365,7 +374,7 @@ class PlatformService {
         if (this.isElectron()) {
             return await window.api.saveIndex(indexData);
         } else {
-            return this._saveIndexLocal(indexData);
+            return this._saveIndexLocal(indexData, journalId);
         }
     }
 
@@ -586,18 +595,20 @@ draft: false
         }
     }
 
-    _loadIndexLocal() {
+    _loadIndexLocal(journalId) {
         try {
-            const stored = localStorage.getItem('atsl-search-index');
+            const key = journalId && journalId !== 'default' ? `atsl-search-index-${journalId}` : 'atsl-search-index';
+            const stored = localStorage.getItem(key);
             return { success: true, index: stored ? JSON.parse(stored) : null };
         } catch {
             return { success: true, index: null };
         }
     }
 
-    _saveIndexLocal(indexData) {
+    _saveIndexLocal(indexData, journalId) {
         try {
-            localStorage.setItem('atsl-search-index', JSON.stringify(indexData));
+            const key = journalId && journalId !== 'default' ? `atsl-search-index-${journalId}` : 'atsl-search-index';
+            localStorage.setItem(key, JSON.stringify(indexData));
             return { success: true };
         } catch {
             return { success: false };
@@ -1208,6 +1219,32 @@ draft: false
         }
 
         return { success: true, entries: results };
+    }
+
+    // ===== Journal Helpers =====
+
+    /**
+     * Extract journals array from settings, with backward-compat migration.
+     * If no journals array exists, creates a default journal from entriesDirectory.
+     */
+    getJournalsFromSettings(settings) {
+        if (settings.journals && settings.journals.length > 0) {
+            return settings.journals;
+        }
+        // Migration: create default journal from existing entriesDirectory
+        const path = settings.entriesDirectory || settings.entriesDirectoryUri || null;
+        if (path) {
+            const name = path.split('/').filter(Boolean).pop() || 'Journal';
+            return [{ id: 'default', name, path }];
+        }
+        return [];
+    }
+
+    /**
+     * Get active journal ID from settings
+     */
+    getActiveJournalId(settings) {
+        return settings.activeJournal || 'default';
     }
 
     // ===== File Picker =====

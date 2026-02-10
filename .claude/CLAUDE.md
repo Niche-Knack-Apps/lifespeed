@@ -6,7 +6,8 @@ Lifespeed -- Blazing-fast mobile-first journaling app, offline-first with markdo
 - Fuse.js (fuzzy search), marked (markdown), js-yaml (frontmatter)
 
 ## Structure
-- renderer/js/ -- 14 files in dependency order (see esbuild.config.mjs)
+- renderer/js/ -- 15 files in dependency order (see esbuild.config.mjs)
+- renderer/js/journal.js -- JournalManager: multi-journal switching, add/remove/rename
 - renderer/dist/ -- bundle output (app.bundle.js)
 - src-tauri/ -- Rust backend (commands, services)
 - android/ -- Capacitor Android project
@@ -31,6 +32,8 @@ After changes:
 - File load order defined in esbuild.config.mjs jsFiles array; new files need correct position
 - Entries are markdown with YAML frontmatter (parsed by frontmatter.js)
 - Fuse.js powers search.js; index rebuilds on entry changes
+- Multi-journal support: journals managed by JournalManager (journal.js), each with independent search index and metadata cache
+- Settings model: `{ activeJournal, journals: [{id, name, path}] }` -- single-journal installs auto-migrate
 - Platform detection (platform.js) gates Tauri vs Capacitor vs Web behavior
 - Android builds use Android Studio at /mnt/data/android-studio/ with SDKs at /mnt/data/android-sdks/
 - Releases output to ../_shared/releases/lifespeed/

@@ -20,6 +20,7 @@ const distDir = path.join(rendererDir, 'dist');
 // Files in dependency order
 const jsFiles = [
     'platform.js',
+    'journal.js',
     'frontmatter.js',
     'entries.js',
     'search.js',
