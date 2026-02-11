@@ -1,6 +1,5 @@
-import type { CapacitorConfig } from '@capacitor/cli';
-
-const config: CapacitorConfig = {
+/** @type {import('@capacitor/cli').CapacitorConfig} */
+const config = {
     appId: 'com.nicheknack.lifespeed',
     appName: 'Lifespeed',
     webDir: 'renderer',
@@ -25,4 +24,4 @@ const config: CapacitorConfig = {
     }
 };
 
-export default config;
+module.exports = config;
