@@ -120,22 +120,6 @@ public class FolderPickerPlugin extends Plugin {
                 logToJS("debug", "Diagnostic - Is directory: " + directory.isDirectory());
                 logToJS("debug", "Diagnostic - Can read: " + directory.canRead());
                 logToJS("debug", "Diagnostic - Can write: " + directory.canWrite());
-
-                try {
-                    DocumentFile[] children = directory.listFiles();
-                    logToJS("debug", "Diagnostic - Child count: " + (children != null ? children.length : "null"));
-
-                    if (children != null && children.length > 0) {
-                        int maxToLog = Math.min(5, children.length);
-                        for (int i = 0; i < maxToLog; i++) {
-                            DocumentFile child = children[i];
-                            logToJS("debug", "Diagnostic - Child[" + i + "]: " + child.getName() +
-                                    " isDir=" + child.isDirectory());
-                        }
-                    }
-                } catch (Exception e) {
-                    logToJS("error", "Diagnostic check failed: " + e.getMessage());
-                }
             }
 
             call.resolve(ret);
@@ -213,7 +197,8 @@ public class FolderPickerPlugin extends Plugin {
                     new String[]{
                         Document.COLUMN_DOCUMENT_ID,
                         Document.COLUMN_DISPLAY_NAME,
-                        Document.COLUMN_MIME_TYPE
+                        Document.COLUMN_MIME_TYPE,
+                        Document.COLUMN_LAST_MODIFIED
                     },
                     null, null, null)) {
 
@@ -228,45 +213,60 @@ public class FolderPickerPlugin extends Plugin {
                     String docId = cursor.getString(0);
                     String name = cursor.getString(1);
                     String mimeType = cursor.getString(2);
+                    long dirMtime = cursor.getLong(3);
 
                     if (!Document.MIME_TYPE_DIR.equals(mimeType)) continue;
                     if (name == null) continue;
 
                     Uri dirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
-                    Uri dirChildrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId);
 
-                    try (Cursor dirCursor = resolver.query(dirChildrenUri,
-                            new String[]{
-                                Document.COLUMN_DOCUMENT_ID,
-                                Document.COLUMN_DISPLAY_NAME,
-                                Document.COLUMN_LAST_MODIFIED
-                            },
-                            null, null, null)) {
+                    if (!extractTitles) {
+                        // Fast path: construct index.md URI by convention (no inner cursor query).
+                        // Valid for ExternalStorageProvider (standard local storage).
+                        String indexDocId = docId + "/index.md";
+                        Uri indexUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, indexDocId);
 
-                        if (dirCursor != null) {
-                            while (dirCursor.moveToNext()) {
-                                String childName = dirCursor.getString(1);
-                                if ("index.md".equals(childName)) {
-                                    String indexDocId = dirCursor.getString(0);
-                                    long mtime = dirCursor.getLong(2);
+                        JSObject entry = new JSObject();
+                        entry.put("dirname", name);
+                        entry.put("uri", dirUri.toString());
+                        entry.put("indexUri", indexUri.toString());
+                        entry.put("mtime", dirMtime);
+                        entries.put(entry);
+                    } else {
+                        // Full path: query inner cursor to find index.md and extract titles
+                        Uri dirChildrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId);
 
-                                    Uri indexUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, indexDocId);
+                        try (Cursor dirCursor = resolver.query(dirChildrenUri,
+                                new String[]{
+                                    Document.COLUMN_DOCUMENT_ID,
+                                    Document.COLUMN_DISPLAY_NAME,
+                                    Document.COLUMN_LAST_MODIFIED
+                                },
+                                null, null, null)) {
 
-                                    JSObject entry = new JSObject();
-                                    entry.put("dirname", name);
-                                    entry.put("uri", dirUri.toString());
-                                    entry.put("indexUri", indexUri.toString());
-                                    entry.put("mtime", mtime);
+                            if (dirCursor != null) {
+                                while (dirCursor.moveToNext()) {
+                                    String childName = dirCursor.getString(1);
+                                    if ("index.md".equals(childName)) {
+                                        String indexDocId = dirCursor.getString(0);
+                                        long mtime = dirCursor.getLong(2);
 
-                                    if (extractTitles) {
+                                        Uri indexUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, indexDocId);
+
+                                        JSObject entry = new JSObject();
+                                        entry.put("dirname", name);
+                                        entry.put("uri", dirUri.toString());
+                                        entry.put("indexUri", indexUri.toString());
+                                        entry.put("mtime", mtime);
+
                                         String title = extractTitleFromUri(indexUri);
                                         if (title != null && !title.isEmpty()) {
                                             entry.put("title", title);
                                         }
-                                    }
 
-                                    entries.put(entry);
-                                    break;
+                                        entries.put(entry);
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1149,7 +1149,7 @@ public class FolderPickerPlugin extends Plugin {
         }
 
         final JSArray entries = entriesArray;
-        final int THREAD_COUNT = 4;
+        final int THREAD_COUNT = 8;
 
         // Run in background with parallel processing
         new Thread(() -> {

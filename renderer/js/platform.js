@@ -1034,11 +1034,11 @@ draft: false
      * Fast list of entries - only returns dirname, uri, mtime (no file content)
      * Used for comparing with cache to detect new/modified/deleted entries
      */
-    async listEntriesFast() {
+    async listEntriesFast(overrideUri) {
         // Tauri: delegate to regular listEntries
         if (this.isTauri()) return this.listEntries();
         if (this.isCapacitor()) {
-            const baseUri = await this._getEntriesDirectoryUri();
+            const baseUri = overrideUri || await this._getEntriesDirectoryUri();
             if (!baseUri) {
                 console.warn('[Platform] No entries directory set');
                 return { success: false, error: 'No entries directory set', entries: [] };

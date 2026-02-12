@@ -1998,19 +1998,62 @@ class App {
     async preWarmJournalCache(journal) {
         try {
             console.log('[App] Pre-warming cache for journal:', journal.id);
-            // Temporarily open the new journal's DB
             const tempCache = new MetadataCache();
             tempCache.dbName = journal.id === 'default' ? 'atsl-metadata' : `atsl-metadata-${journal.id}`;
             await tempCache.init();
 
-            // Check if cache already exists
             const hasCacheForFolder = await tempCache.hasCacheForFolder(journal.path);
             if (!hasCacheForFolder) {
-                console.log('[App] No cache for new journal, will build on first switch');
+                console.log('[App] Building index for new journal in background:', journal.id);
+                // Fire-and-forget background index build
+                this.backgroundBuildIndex(journal.path, tempCache).catch(e => {
+                    console.warn('[App] Background index build failed:', e);
+                    tempCache.close();
+                });
+            } else {
+                tempCache.close();
             }
-            tempCache.close();
         } catch (e) {
             console.warn('[App] Pre-warm cache error:', e);
+        }
+    }
+
+    /**
+     * Build index for a journal folder in the background (fire-and-forget).
+     * Uses a temporary MetadataCache instance. Closes cache when done.
+     */
+    async backgroundBuildIndex(folderPath, tempCache) {
+        try {
+            const dirList = await platform.listEntriesFast(folderPath);
+            if (!dirList.success || !dirList.entries || dirList.entries.length === 0) {
+                await tempCache.updateMeta({ folderPath, lastSync: Date.now(), entryCount: 0 });
+                tempCache.close();
+                return;
+            }
+
+            const total = dirList.entries.length;
+            console.log('[App] Background index: found', total, 'entries for', folderPath);
+
+            const BATCH_SIZE = 200;
+            let indexed = 0;
+
+            for (let i = 0; i < total; i += BATCH_SIZE) {
+                const batch = dirList.entries.slice(i, i + BATCH_SIZE);
+                const result = await platform.batchGetMetadata(batch);
+
+                if (result.success && result.entries) {
+                    await tempCache.saveEntries(result.entries);
+                    indexed += result.entries.length;
+                }
+
+                // Yield to keep main thread responsive
+                await new Promise(r => setTimeout(r, 0));
+            }
+
+            await tempCache.updateMeta({ folderPath, lastSync: Date.now(), entryCount: indexed });
+            console.log('[App] Background index complete:', indexed, 'entries for', folderPath);
+        } finally {
+            tempCache.close();
         }
     }
 
@@ -2213,8 +2256,8 @@ class App {
             this.showIndexingProgress(0, `Building index - this is a one-time operation`);
             this.updateIndexingStatus(`Found ${total} entries`);
 
-            // Larger batch size for faster processing (fewer native calls)
-            const BATCH_SIZE = 100;
+            // Larger batch size for faster processing (fewer native bridge crossings)
+            const BATCH_SIZE = 200;
             // Show preview after this many entries
             const PREVIEW_THRESHOLD = 50;
             const allMetadata = [];
