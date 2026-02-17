@@ -1,6 +1,6 @@
 {
   "name": "lifespeed",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A blazing-fast, mobile-first journaling app - launch to typing in milliseconds",
   "homepage": "https://nicheknack.app/lifespeed",
   "scripts": {

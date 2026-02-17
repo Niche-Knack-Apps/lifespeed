@@ -291,8 +291,23 @@ class PlatformService {
         }
         {
             const settings = this._loadSettingsLocal();
-            // Use entriesDirectoryUri (set by SAF picker) or fall back to entriesDirectory
-            return settings.settings?.entriesDirectoryUri || settings.settings?.entriesDirectory || 'journal';
+            const uri = settings.settings?.entriesDirectoryUri || settings.settings?.entriesDirectory || null;
+            if (uri && uri.startsWith('content://')) return uri;
+
+            // Capacitor without SAF: use native internal storage
+            if (this.isCapacitor()) {
+                const plugins = await this._getCapacitorPlugins();
+                if (plugins.FolderPicker) {
+                    try {
+                        const result = await plugins.FolderPicker.getInternalJournalPath();
+                        return result.path;
+                    } catch (e) {
+                        console.warn('[Platform] getInternalJournalPath failed:', e);
+                    }
+                }
+            }
+
+            return uri || 'journal';
         }
     }
 
@@ -774,13 +789,45 @@ draft: false
     async _createEntryCapacitor(title, options = {}) {
         const baseUri = await this._getEntriesDirectoryUri();
 
-        // If no SAF directory is set, use IndexedDB fallback
-        if (!baseUri) {
-            console.log('[Platform] No SAF directory set, using IndexedDB fallback');
+        const plugins = await this._getCapacitorPlugins();
+
+        // If no valid SAF directory, use internal storage
+        if (!baseUri || !baseUri.startsWith('content://')) {
+            console.log('[Platform] No SAF directory, using internal storage');
+            if (plugins.FolderPicker) {
+                try {
+                    const internalPath = baseUri && baseUri.startsWith('/')
+                        ? baseUri
+                        : (await plugins.FolderPicker.getInternalJournalPath()).path;
+                    const now = new Date();
+                    const date = now.toISOString().slice(0, 10);
+                    const time = now.toTimeString().slice(0, 8).replace(/:/g, '-');
+                    const slug = title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) : time;
+                    const dirname = options.dirname || `${date}-${slug}`;
+                    const content = options.content || `---\ntitle: "${title || ''}"\ndate: ${now.toISOString()}\nlastmod: ${now.toISOString()}\ntags: []\ndraft: false\n---\n\n`;
+
+                    const result = await plugins.FolderPicker.createEntryInternal({
+                        path: internalPath,
+                        dirname: dirname,
+                        content: content
+                    });
+
+                    if (result.success) {
+                        return {
+                            success: true,
+                            path: result.path,
+                            dirname: dirname,
+                            content: content,
+                            entryUri: result.path.replace(/\/index\.md$/, '')
+                        };
+                    }
+                } catch (e) {
+                    console.error('[Platform] Internal createEntry error:', e);
+                }
+            }
             return this._createEntryWeb(title);
         }
 
-        const plugins = await this._getCapacitorPlugins();
         if (!plugins.FolderPicker) {
             return this._createEntryWeb(title);
         }
@@ -842,6 +889,19 @@ draft: false
             }
         }
 
+        // Check if path is an internal storage path
+        if (path && path.startsWith('/') && plugins.FolderPicker) {
+            try {
+                const result = await plugins.FolderPicker.writeFileInternal({
+                    path: path,
+                    content: content
+                });
+                return result;
+            } catch (e) {
+                console.error('[Platform] Internal save error:', e);
+            }
+        }
+
         // Fallback to IndexedDB
         return this._saveEntryWeb(path, content);
     }
@@ -861,19 +921,57 @@ draft: false
             }
         }
 
+        // Check if path is an internal storage path
+        if (path && path.startsWith('/') && plugins.FolderPicker) {
+            try {
+                const result = await plugins.FolderPicker.readFileInternal({
+                    path: path
+                });
+                return result;
+            } catch (e) {
+                console.error('[Platform] Internal load error:', e);
+            }
+        }
+
         // Fallback to IndexedDB
         return this._loadEntryWeb(path);
     }
 
     async _listEntriesCapacitor() {
         const baseUri = await this._getEntriesDirectoryUri();
+        const plugins = await this._getCapacitorPlugins();
 
-        // If no SAF directory is set, use IndexedDB fallback
-        if (!baseUri) {
+        // If no valid SAF directory, try internal storage
+        if (!baseUri || !baseUri.startsWith('content://')) {
+            if (plugins.FolderPicker) {
+                try {
+                    const internalPath = baseUri && baseUri.startsWith('/')
+                        ? baseUri
+                        : (await plugins.FolderPicker.getInternalJournalPath()).path;
+                    const result = await plugins.FolderPicker.listEntriesInternal({
+                        path: internalPath
+                    });
+                    if (result.success) {
+                        const entries = result.entries.map(e => ({
+                            path: e.path,
+                            dirname: e.dirname,
+                            mtime: e.mtime,
+                            entryUri: e.path.replace(/\/index\.md$/, ''),
+                            title: e.title || null,
+                            date: e.date || null,
+                            tags: e.tags || [],
+                            excerpt: e.excerpt || ''
+                        }));
+                        entries.sort((a, b) => b.mtime - a.mtime);
+                        return { success: true, entries };
+                    }
+                } catch (e) {
+                    console.error('[Platform] Internal listEntries error:', e);
+                }
+            }
             return this._listEntriesWeb();
         }
 
-        const plugins = await this._getCapacitorPlugins();
         if (!plugins.FolderPicker) {
             return this._listEntriesWeb();
         }
@@ -909,26 +1007,41 @@ draft: false
 
     async _deleteEntryCapacitor(path, entryUri) {
         console.log('[Platform] _deleteEntryCapacitor called - path:', path, 'entryUri:', entryUri);
-        // Use native SAF delete if we have an entryUri
-        if (entryUri) {
-            const plugins = await this._getCapacitorPlugins();
-            console.log('[Platform] Has FolderPicker:', !!plugins.FolderPicker);
-            if (plugins.FolderPicker) {
-                try {
-                    console.log('[Platform] Calling native deleteEntry with entryUri:', entryUri);
-                    const result = await plugins.FolderPicker.deleteEntry({
-                        entryUri: entryUri
-                    });
-                    console.log('[Platform] Native deleteEntry result:', JSON.stringify(result));
-                    return result;
-                } catch (e) {
-                    console.error('[Platform] SAF deleteEntry error:', e);
-                    return { success: false, error: e.message };
-                }
+        const plugins = await this._getCapacitorPlugins();
+
+        // SAF delete
+        if (entryUri && entryUri.startsWith('content://') && plugins.FolderPicker) {
+            try {
+                console.log('[Platform] Calling native deleteEntry with entryUri:', entryUri);
+                const result = await plugins.FolderPicker.deleteEntry({
+                    entryUri: entryUri
+                });
+                console.log('[Platform] Native deleteEntry result:', JSON.stringify(result));
+                return result;
+            } catch (e) {
+                console.error('[Platform] SAF deleteEntry error:', e);
+                return { success: false, error: e.message };
             }
-        } else {
-            console.log('[Platform] No entryUri provided, falling back to IndexedDB');
         }
+
+        // Internal storage delete
+        const dirPath = entryUri && entryUri.startsWith('/')
+            ? entryUri
+            : (path && path.startsWith('/') ? path.replace(/\/index\.md$/, '') : null);
+        if (dirPath && plugins.FolderPicker) {
+            try {
+                console.log('[Platform] Calling deleteDirectoryInternal with path:', dirPath);
+                const result = await plugins.FolderPicker.deleteDirectoryInternal({
+                    path: dirPath
+                });
+                console.log('[Platform] Internal delete result:', JSON.stringify(result));
+                return result;
+            } catch (e) {
+                console.error('[Platform] Internal deleteEntry error:', e);
+                return { success: false, error: e.message };
+            }
+        }
+
         // Fallback to IndexedDB delete
         return this._deleteEntryWeb(path);
     }
@@ -1042,9 +1155,31 @@ draft: false
         if (this.isTauri()) return this.listEntries();
         if (this.isCapacitor()) {
             const baseUri = overrideUri || await this._getEntriesDirectoryUri();
-            if (!baseUri) {
-                console.warn('[Platform] No entries directory set');
-                return { success: false, error: 'No entries directory set', entries: [] };
+
+            // No SAF directory: use internal storage
+            if (!baseUri || !baseUri.startsWith('content://')) {
+                const plugins = await this._getCapacitorPlugins();
+                if (plugins.FolderPicker) {
+                    try {
+                        const internalPath = baseUri && baseUri.startsWith('/')
+                            ? baseUri
+                            : (await plugins.FolderPicker.getInternalJournalPath()).path;
+                        const result = await plugins.FolderPicker.listEntriesInternal({ path: internalPath });
+                        if (result.success) {
+                            const entries = result.entries.map(e => ({
+                                path: e.path,
+                                dirname: e.dirname,
+                                mtime: e.mtime,
+                                entryUri: e.path.replace(/\/index\.md$/, ''),
+                                indexUri: e.path
+                            }));
+                            return { success: true, entries, count: entries.length };
+                        }
+                    } catch (e) {
+                        console.error('[Platform] Internal listEntriesFast error:', e);
+                    }
+                }
+                return { success: false, error: 'No directory set', entries: [] };
             }
 
             const plugins = await this._getCapacitorPlugins();
@@ -1102,30 +1237,72 @@ draft: false
         if (this.isCapacitor()) {
             const plugins = await this._getCapacitorPlugins();
             if (plugins.FolderPicker) {
-                try {
-                    // Transform to native format
-                    const nativeEntries = entries.map(e => ({
-                        indexUri: e.indexUri || e.path,
-                        dirname: e.dirname,
-                        uri: e.entryUri,
-                        mtime: e.mtime
-                    }));
+                // Separate SAF and internal storage entries
+                const safEntries = entries.filter(e => (e.indexUri || e.path || '').startsWith('content://'));
+                const internalEntries = entries.filter(e => (e.path || e.indexUri || '').startsWith('/'));
+                const allResults = [];
 
-                    const result = await plugins.FolderPicker.batchGetMetadata({
-                        entries: nativeEntries
-                    });
-
-                    if (result.success) {
-                        return {
-                            success: true,
-                            entries: result.entries,
-                            count: result.count
-                        };
+                // SAF entries: use native batch metadata
+                if (safEntries.length > 0) {
+                    try {
+                        const nativeEntries = safEntries.map(e => ({
+                            indexUri: e.indexUri || e.path,
+                            dirname: e.dirname,
+                            uri: e.entryUri,
+                            mtime: e.mtime
+                        }));
+                        const result = await plugins.FolderPicker.batchGetMetadata({
+                            entries: nativeEntries
+                        });
+                        if (result.success && result.entries) {
+                            allResults.push(...result.entries);
+                        }
+                    } catch (e) {
+                        console.error('[Platform] SAF batchGetMetadata error:', e);
                     }
-                    return result;
-                } catch (e) {
-                    console.error('[Platform] batchGetMetadata error:', e);
-                    return { success: false, error: e.message, entries: [] };
+                }
+
+                // Internal entries: read individually with readFileInternal
+                for (const entry of internalEntries) {
+                    try {
+                        const filePath = entry.path || entry.indexUri;
+                        const result = await plugins.FolderPicker.readFileInternal({ path: filePath });
+                        if (result.success) {
+                            const parsed = window.frontmatter?.parse(result.content) || {};
+                            const rawBody = (parsed.body || '').trim();
+                            const cleanExcerpt = rawBody
+                                .replace(/^#+\s+/gm, '')
+                                .replace(/\*\*(.+?)\*\*/g, '$1')
+                                .replace(/\*(.+?)\*/g, '$1')
+                                .replace(/`(.+?)`/g, '$1')
+                                .replace(/!\[.*?\]\(.*?\)/g, '')
+                                .replace(/\[(.+?)\]\(.*?\)/g, '$1')
+                                .replace(/^>\s+/gm, '')
+                                .replace(/^[-*+]\s+/gm, '')
+                                .replace(/^\d+\.\s+/gm, '')
+                                .replace(/\n{2,}/g, ' ')
+                                .replace(/\n/g, ' ')
+                                .replace(/\s{2,}/g, ' ')
+                                .trim()
+                                .substring(0, 300);
+                            allResults.push({
+                                path: filePath,
+                                dirname: entry.dirname,
+                                entryUri: entry.entryUri,
+                                mtime: entry.mtime,
+                                title: parsed.data?.title || '',
+                                date: parsed.data?.date || '',
+                                tags: parsed.data?.tags || [],
+                                excerpt: cleanExcerpt
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('[Platform] Internal metadata error for:', entry.dirname);
+                    }
+                }
+
+                if (safEntries.length > 0 || internalEntries.length > 0) {
+                    return { success: true, entries: allResults, count: allResults.length };
                 }
             }
         }

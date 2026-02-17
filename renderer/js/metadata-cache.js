@@ -290,7 +290,11 @@ class MetadataCache {
         const cached = meta.folderPath.replace(/\/$/, '');
         const current = folderPath.replace(/\/$/, '');
 
-        return cached === current && meta.entryCount > 0;
+        // Only check that folderPath matches. Don't require entryCount > 0
+        // because saveEntry() doesn't update meta.entryCount — an initially
+        // empty journal that later gets entries would report entryCount: 0
+        // and trigger a destructive clearEntries() + full rebuild on relaunch.
+        return cached === current;
     }
 
     /**

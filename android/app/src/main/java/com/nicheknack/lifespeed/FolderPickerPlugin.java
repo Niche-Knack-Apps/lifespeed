@@ -37,6 +37,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -110,17 +113,19 @@ public class FolderPickerPlugin extends Plugin {
             ret.put("success", true);
             ret.put("uri", treeUri.toString());
 
-            // Get display name and run diagnostics
-            DocumentFile directory = DocumentFile.fromTreeUri(getContext(), treeUri);
-            if (directory != null) {
-                ret.put("name", directory.getName());
-
-                // Diagnostic logging to help debug issues
-                logToJS("debug", "Diagnostic - Directory exists: " + directory.exists());
-                logToJS("debug", "Diagnostic - Is directory: " + directory.isDirectory());
-                logToJS("debug", "Diagnostic - Can read: " + directory.canRead());
-                logToJS("debug", "Diagnostic - Can write: " + directory.canWrite());
+            // Extract display name from URI without SAF queries (instant).
+            // DocumentFile.fromTreeUri + getName/exists/canRead each do slow
+            // ContentResolver queries that add seconds on large directories.
+            String docId = DocumentsContract.getTreeDocumentId(treeUri);
+            String name = docId;
+            if (docId != null) {
+                int slash = docId.lastIndexOf('/');
+                if (slash >= 0) name = docId.substring(slash + 1);
+                int colon = name.lastIndexOf(':');
+                if (colon >= 0) name = name.substring(colon + 1);
             }
+            ret.put("name", name != null && !name.isEmpty() ? name : "Journal");
+            logToJS("debug", "Directory added: " + treeUri + " (name: " + name + ")");
 
             call.resolve(ret);
         } else {
@@ -1128,6 +1133,336 @@ public class FolderPickerPlugin extends Plugin {
 
         // Don't block main thread - let background thread handle completion
         executor.shutdown();
+    }
+
+    // ===== Internal Storage Methods (non-SAF, for default journal) =====
+
+    @PluginMethod
+    public void getInternalJournalPath(PluginCall call) {
+        File dir = new File(getContext().getFilesDir(), "journal");
+        if (!dir.exists()) dir.mkdirs();
+        JSObject ret = new JSObject();
+        ret.put("path", dir.getAbsolutePath());
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void createEntryInternal(PluginCall call) {
+        String path = call.getString("path");
+        String dirname = call.getString("dirname");
+        String content = call.getString("content");
+        logToJS("debug", "createEntryInternal called - path: " + path + ", dirname: " + dirname);
+
+        if (path == null || dirname == null) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", "Missing path or dirname");
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            File entryDir = new File(path, dirname);
+            if (!entryDir.exists()) entryDir.mkdirs();
+
+            File indexFile = new File(entryDir, "index.md");
+            if (content != null) {
+                FileWriter writer = new FileWriter(indexFile);
+                writer.write(content);
+                writer.close();
+            }
+
+            // Create images and files subdirectories
+            new File(entryDir, "images").mkdirs();
+            new File(entryDir, "files").mkdirs();
+
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("path", indexFile.getAbsolutePath());
+            ret.put("dirname", dirname);
+            call.resolve(ret);
+
+        } catch (Exception e) {
+            logToJS("error", "Error creating internal entry: " + e.getMessage());
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void writeFileInternal(PluginCall call) {
+        String path = call.getString("path");
+        String content = call.getString("content");
+        logToJS("debug", "writeFileInternal called - path: " + path);
+
+        if (path == null || content == null) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", "Missing path or content");
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            File file = new File(path);
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+
+            FileWriter writer = new FileWriter(file);
+            writer.write(content);
+            writer.close();
+
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            call.resolve(ret);
+
+        } catch (Exception e) {
+            logToJS("error", "Error writing internal file: " + e.getMessage());
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void readFileInternal(PluginCall call) {
+        String path = call.getString("path");
+        logToJS("debug", "readFileInternal called - path: " + path);
+
+        if (path == null) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", "No path provided");
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            File file = new File(path);
+            if (!file.exists()) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "File not found");
+                call.resolve(ret);
+                return;
+            }
+
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            StringBuilder content = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                content.append(line).append("\n");
+            }
+            reader.close();
+
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("content", content.toString());
+            call.resolve(ret);
+
+        } catch (Exception e) {
+            logToJS("error", "Error reading internal file: " + e.getMessage());
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void listEntriesInternal(PluginCall call) {
+        String path = call.getString("path");
+        logToJS("debug", "listEntriesInternal called - path: " + path);
+
+        if (path == null) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", "No path provided");
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            File dir = new File(path);
+            if (!dir.exists() || !dir.isDirectory()) {
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("entries", new JSArray());
+                call.resolve(ret);
+                return;
+            }
+
+            File[] children = dir.listFiles();
+            JSArray entries = new JSArray();
+
+            if (children != null) {
+                for (File child : children) {
+                    if (!child.isDirectory()) continue;
+
+                    File indexFile = new File(child, "index.md");
+                    if (!indexFile.exists()) continue;
+
+                    JSObject entry = new JSObject();
+                    entry.put("dirname", child.getName());
+                    entry.put("path", indexFile.getAbsolutePath());
+                    entry.put("mtime", indexFile.lastModified());
+
+                    JSObject metadata = extractMetadataFromInternalFile(indexFile);
+                    if (metadata != null) {
+                        entry.put("title", metadata.optString("title", ""));
+                        entry.put("date", metadata.optString("date", ""));
+                        entry.put("tags", metadata.opt("tags") != null ? metadata.opt("tags") : new JSArray());
+                        entry.put("excerpt", metadata.optString("excerpt", ""));
+                    }
+
+                    entries.put(entry);
+                }
+            }
+
+            logToJS("debug", "listEntriesInternal: returning " + entries.length() + " entries");
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("entries", entries);
+            call.resolve(ret);
+
+        } catch (Exception e) {
+            logToJS("error", "Error listing internal entries: " + e.getMessage());
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void deleteDirectoryInternal(PluginCall call) {
+        String path = call.getString("path");
+        logToJS("debug", "deleteDirectoryInternal called - path: " + path);
+
+        if (path == null) {
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", "No path provided");
+            call.resolve(ret);
+            return;
+        }
+
+        try {
+            File dir = new File(path);
+            boolean deleted = deleteRecursive(dir);
+
+            JSObject ret = new JSObject();
+            ret.put("success", deleted);
+            if (!deleted) {
+                ret.put("error", "Failed to delete directory");
+            }
+            call.resolve(ret);
+
+        } catch (Exception e) {
+            logToJS("error", "Error deleting internal directory: " + e.getMessage());
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    private boolean deleteRecursive(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursive(child);
+                }
+            }
+        }
+        return file.delete();
+    }
+
+    private JSObject extractMetadataFromInternalFile(File file) {
+        JSObject metadata = new JSObject();
+
+        try {
+            BufferedReader reader = new BufferedReader(new FileReader(file));
+            StringBuilder contentBuilder = new StringBuilder();
+            String line;
+            boolean inFrontmatter = false;
+            boolean frontmatterDone = false;
+            int lineCount = 0;
+            int contentLines = 0;
+
+            String title = null;
+            String date = null;
+            JSArray tags = new JSArray();
+
+            while ((line = reader.readLine()) != null && lineCount < 50) {
+                lineCount++;
+
+                if (line.trim().equals("---")) {
+                    if (!inFrontmatter && lineCount <= 2) {
+                        inFrontmatter = true;
+                        continue;
+                    } else if (inFrontmatter) {
+                        inFrontmatter = false;
+                        frontmatterDone = true;
+                        continue;
+                    }
+                }
+
+                if (inFrontmatter) {
+                    if (line.startsWith("title:")) {
+                        title = line.substring(6).trim();
+                        if ((title.startsWith("\"") && title.endsWith("\"")) ||
+                            (title.startsWith("'") && title.endsWith("'"))) {
+                            title = title.substring(1, title.length() - 1);
+                        }
+                    } else if (line.startsWith("date:")) {
+                        date = line.substring(5).trim();
+                    } else if (line.startsWith("tags:")) {
+                        String tagsStr = line.substring(5).trim();
+                        if (tagsStr.startsWith("[") && tagsStr.endsWith("]")) {
+                            tagsStr = tagsStr.substring(1, tagsStr.length() - 1);
+                            for (String tag : tagsStr.split(",")) {
+                                tag = tag.trim();
+                                if (!tag.isEmpty()) {
+                                    tags.put(tag);
+                                }
+                            }
+                        }
+                    }
+                } else if (frontmatterDone && contentLines < 5) {
+                    String trimmed = line.trim();
+                    if (!trimmed.isEmpty()) {
+                        if (contentBuilder.length() > 0) {
+                            contentBuilder.append(" ");
+                        }
+                        contentBuilder.append(trimmed);
+                        contentLines++;
+                    }
+                }
+            }
+
+            reader.close();
+
+            metadata.put("title", title != null ? title : "");
+            metadata.put("date", date != null ? date : "");
+            metadata.put("tags", tags);
+
+            String excerpt = contentBuilder.toString();
+            if (excerpt.length() > 300) {
+                excerpt = excerpt.substring(0, 300);
+            }
+            metadata.put("excerpt", excerpt);
+
+        } catch (Exception e) {
+            logToJS("error", "Error extracting metadata from internal file: " + e.getMessage());
+            return null;
+        }
+
+        return metadata;
     }
 
     /**

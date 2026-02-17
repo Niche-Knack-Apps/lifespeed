@@ -2004,12 +2004,10 @@ class App {
         Object.assign(this.settings, journalManager.toSettingsData());
         await this.saveSettings();
 
-        // Pre-warm: build cache for the new journal in background
-        this.preWarmJournalCache(journal);
-
-        platform.showToast(`Journal "${name}" added`);
+        platform.showToast(`Adding "${name}"...`);
         this.updateJournalSwitcherUI();
         this.renderJournalSettingsSection();
+        await this.switchJournal(journal.id);
     }
 
     /**
@@ -2196,15 +2194,21 @@ class App {
                             console.error('[App] Metadata backfill error:', err);
                         });
                     }
-
-                    // CRITICAL: Always verify filesystem matches cache
-                    // Filesystem is source of truth - cache is just for speed
-                    console.log('[App] Starting filesystem verification...');
-                    this.verifyFilesystemEntries().catch(err => {
-                        console.error('[App] Filesystem verification error:', err);
-                    });
-                    return;
+                } else {
+                    // Cache exists for this folder but has no entries.
+                    // Instead of a destructive full rebuild, render empty and
+                    // let verification pick up any entries added last session.
+                    this.allEntries = [];
+                    this.renderEntriesList([]);
                 }
+
+                // CRITICAL: Always verify filesystem matches cache
+                // Filesystem is source of truth - cache is just for speed
+                console.log('[App] Starting filesystem verification...');
+                this.verifyFilesystemEntries().catch(err => {
+                    console.error('[App] Filesystem verification error:', err);
+                });
+                return;
             }
 
             // SLOW PATH: No cache for this folder - need to build index (one-time)
@@ -2365,7 +2369,7 @@ class App {
             console.log('[App] Filesystem has', diskEntries.length, 'entries, sidebar has', this.allEntries?.length || 0);
 
             if (!dirList.success) {
-                console.error('[App] Failed to list filesystem entries');
+                console.warn('[App] Cannot list filesystem entries (no SAF directory?), skipping verification');
                 return;
             }
 
