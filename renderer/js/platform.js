@@ -126,12 +126,12 @@ class PlatformService {
 
     // ===== Entry Operations =====
 
-    async createEntry(title) {
+    async createEntry(title, options = {}) {
         if (this.isTauri()) {
             return await this._createEntryTauri(title);
         }
         if (this.isCapacitor()) {
-            return await this._createEntryCapacitor(title);
+            return await this._createEntryCapacitor(title, options);
         } else {
             return await this._createEntryWeb(title);
         }
@@ -762,13 +762,16 @@ draft: false
     // ===== Capacitor Implementations =====
 
     async _getEntriesDirectoryUri() {
+        if (typeof journalManager !== 'undefined' && journalManager.getActiveJournalPath()) {
+            return journalManager.getActiveJournalPath();
+        }
         const result = this._loadSettingsLocal();
         const uri = result.settings?.entriesDirectoryUri || null;
         console.log('[Platform] Getting entries directory URI:', uri);
         return uri;
     }
 
-    async _createEntryCapacitor(title) {
+    async _createEntryCapacitor(title, options = {}) {
         const baseUri = await this._getEntriesDirectoryUri();
 
         // If no SAF directory is set, use IndexedDB fallback
@@ -787,9 +790,9 @@ draft: false
             const date = now.toISOString().slice(0, 10);
             const time = now.toTimeString().slice(0, 8).replace(/:/g, '-');
             const slug = title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50) : time;
-            const dirname = `${date}-${slug}`;
+            const dirname = options.dirname || `${date}-${slug}`;
 
-            const content = `---
+            const content = options.content || `---
 title: "${title || ''}"
 date: ${now.toISOString()}
 lastmod: ${now.toISOString()}

@@ -903,6 +903,27 @@ class App {
                 const content = this.dom.editor.value;
                 const parsed = frontmatter.parse(content);
                 if (!parsed.body.trim()) return; // Don't write empty drafts to disk
+
+                // On Capacitor/SAF, the draft path is invalid (naive concatenation).
+                // Create the entry via SAF to get proper document URIs.
+                if (platform.isCapacitor()) {
+                    const title = this.dom.metaTitle.value.trim();
+                    const createResult = await platform.createEntry(title, {
+                        dirname: this.currentEntry.dirname,
+                        content: content
+                    });
+                    if (!createResult.success) {
+                        console.error('[App] Failed to create entry via SAF:', createResult.error);
+                        platform.showToast('Failed to save entry');
+                        return; // Keep as draft, don't lose the content
+                    }
+                    // Update entry with proper SAF URIs
+                    this.currentEntry.path = createResult.path;
+                    this.currentEntry.dirname = createResult.dirname;
+                    this.currentEntry.entryUri = createResult.entryUri;
+                    console.log('[App] Draft created via SAF:', createResult.path);
+                }
+
                 // Draft has content — it will be written to disk below via saveEntry
                 this.isDraft = false;
                 // Add to sidebar and cache now that it's real
@@ -2034,7 +2055,7 @@ class App {
             const total = dirList.entries.length;
             console.log('[App] Background index: found', total, 'entries for', folderPath);
 
-            const BATCH_SIZE = 200;
+            const BATCH_SIZE = 500;
             let indexed = 0;
 
             for (let i = 0; i < total; i += BATCH_SIZE) {
@@ -2044,6 +2065,13 @@ class App {
                 if (result.success && result.entries) {
                     await tempCache.saveEntries(result.entries);
                     indexed += result.entries.length;
+
+                    // Save meta after FIRST batch so hasCacheForFolder() returns true.
+                    // This prevents the foreground from starting a duplicate index build
+                    // when the user switches to this journal while background is still running.
+                    if (i === 0) {
+                        await tempCache.updateMeta({ folderPath, lastSync: Date.now(), entryCount: indexed });
+                    }
                 }
 
                 // Yield to keep main thread responsive
@@ -2236,7 +2264,7 @@ class App {
             await window.metadataCache?.clearEntries();
 
             // Get fast directory listing (no file reads)
-            const dirList = await platform.listEntriesFast();
+            const dirList = await platform.listEntriesFast(folderPath);
 
             if (!dirList.success || !dirList.entries || dirList.entries.length === 0) {
                 console.log('[App] No entries found in directory');
@@ -2257,7 +2285,7 @@ class App {
             this.updateIndexingStatus(`Found ${total} entries`);
 
             // Larger batch size for faster processing (fewer native bridge crossings)
-            const BATCH_SIZE = 200;
+            const BATCH_SIZE = 500;
             // Show preview after this many entries
             const PREVIEW_THRESHOLD = 50;
             const allMetadata = [];

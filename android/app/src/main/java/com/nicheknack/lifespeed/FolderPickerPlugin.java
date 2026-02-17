@@ -1149,7 +1149,7 @@ public class FolderPickerPlugin extends Plugin {
         }
 
         final JSArray entries = entriesArray;
-        final int THREAD_COUNT = 8;
+        final int THREAD_COUNT = 16;
 
         // Run in background with parallel processing
         new Thread(() -> {
@@ -1173,6 +1173,7 @@ public class FolderPickerPlugin extends Plugin {
 
                             // Extract metadata using URI directly (faster than DocumentFile)
                             JSObject metadata = extractMetadataFromUri(fileUri);
+                            if (metadata == null) return null;
                             metadata.put("path", indexUri);
                             metadata.put("dirname", dirname);
                             metadata.put("entryUri", entryUri);
@@ -1301,6 +1302,7 @@ public class FolderPickerPlugin extends Plugin {
             }
         } catch (Exception e) {
             logToJS("error", "Error extracting metadata: " + e.getMessage());
+            return null;
         }
 
         return metadata;
