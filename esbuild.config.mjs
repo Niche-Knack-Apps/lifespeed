@@ -33,6 +33,7 @@ const jsFiles = [
     'settings.js',
     'about.js',
     'scroll-sync.js',
+    'undo.js',
     'app.js'
 ];
 

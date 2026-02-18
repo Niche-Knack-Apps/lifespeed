@@ -17,7 +17,7 @@ const about = {
 
     // App info
     name: 'Lifespeed',
-    version: '1.0.0',
+    version: '1.0.4',
     description: 'A blazing-fast journaling app',
     brand: 'A Niche-Knack App'
 };

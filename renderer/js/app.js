@@ -19,6 +19,7 @@ class App {
         this.lastInputTime = 0; // Track last typing time to prevent sync during active editing
         this.isSyncingCache = false; // Prevent concurrent syncs
         this.scrollSync = null; // Endemic scroll sync controller
+        this.undoManager = null;
 
         // DOM references (cached for speed)
         this.dom = {};
@@ -45,6 +46,7 @@ class App {
         this.initFinder();
         this.initSettingsModal();
         this.initKeyboardShortcuts();
+        this.undoManager = new UndoManager();
 
         // SPEED: Prepare draft entry in memory ONLY (no disk write)
         // File is created on first auto-save when user actually types
@@ -433,6 +435,7 @@ class App {
             this.scheduleAutoSave();
             this.updateWordCount();
             this.updateAutoTitle();
+            if (this.undoManager) this.undoManager.record(this.dom.editor.value);
         });
 
         // Handle paste for images in source
@@ -457,6 +460,7 @@ class App {
             this.syncPreviewToSource();
             this.scheduleAutoSave();
             this.updateWordCount();
+            if (this.undoManager) this.undoManager.record(this.dom.editor.value);
             this.updateAutoTitle();
         });
 
@@ -854,6 +858,14 @@ class App {
     }
 
     wrapSelection(prefix, suffix = prefix) {
+        if (this.currentMode === 'preview') {
+            this.wrapSelectionPreview(prefix);
+        } else {
+            this.wrapSelectionSource(prefix, suffix);
+        }
+    }
+
+    wrapSelectionSource(prefix, suffix = prefix) {
         const editor = this.dom.editor;
         const start = editor.selectionStart;
         const end = editor.selectionEnd;
@@ -865,9 +877,52 @@ class App {
         editor.selectionEnd = start + prefix.length + selected.length;
         editor.focus();
         this.scheduleAutoSave();
+        if (this.undoManager) this.undoManager.record(this.dom.editor.value);
+    }
+
+    wrapSelectionPreview(prefix) {
+        // Map markdown prefix to execCommand
+        const commandMap = {
+            '**': 'bold',
+            '*': 'italic',
+            '~~': 'strikeThrough'
+        };
+
+        const command = commandMap[prefix];
+        if (command) {
+            this.dom.preview.focus();
+            document.execCommand(command, false, null);
+        } else if (prefix === '`') {
+            // Wrap selection in <code> via DOM API
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0 && !selection.isCollapsed) {
+                const range = selection.getRangeAt(0);
+                const code = document.createElement('code');
+                try {
+                    range.surroundContents(code);
+                } catch (e) {
+                    // surroundContents fails if selection spans partial nodes
+                    const fragment = range.extractContents();
+                    code.appendChild(fragment);
+                    range.insertNode(code);
+                }
+                // Move selection after the code element
+                selection.collapseToEnd();
+            }
+        }
+        // execCommand triggers 'input' event on contenteditable, which calls
+        // syncPreviewToSource + scheduleAutoSave + undo record automatically
     }
 
     prefixLine(prefix) {
+        if (this.currentMode === 'preview') {
+            this.prefixLinePreview(prefix);
+        } else {
+            this.prefixLineSource(prefix);
+        }
+    }
+
+    prefixLineSource(prefix) {
         const editor = this.dom.editor;
         const start = editor.selectionStart;
         const value = editor.value;
@@ -882,6 +937,42 @@ class App {
         editor.selectionStart = editor.selectionEnd = start + prefix.length;
         editor.focus();
         this.scheduleAutoSave();
+        if (this.undoManager) this.undoManager.record(this.dom.editor.value);
+    }
+
+    prefixLinePreview(prefix) {
+        this.dom.preview.focus();
+
+        if (prefix === '## ') {
+            document.execCommand('formatBlock', false, 'h2');
+        } else if (prefix === '### ') {
+            document.execCommand('formatBlock', false, 'h3');
+        } else if (prefix === '- ') {
+            document.execCommand('insertUnorderedList', false, null);
+        } else if (prefix === '> ') {
+            // Wrap current selection/block in blockquote
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const blockquote = document.createElement('blockquote');
+                try {
+                    range.surroundContents(blockquote);
+                } catch (e) {
+                    const fragment = range.extractContents();
+                    blockquote.appendChild(fragment);
+                    range.insertNode(blockquote);
+                }
+                selection.collapseToEnd();
+            }
+        } else if (prefix === '- [ ] ') {
+            // Checkbox list — fall back to source manipulation + re-render
+            this.undoManager?.flush();
+            this.syncPreviewToSource();
+            this.prefixLineSource(prefix);
+            this.renderPreview();
+            return;
+        }
+        // execCommand triggers 'input' event automatically
     }
 
     scheduleAutoSave() {
@@ -892,6 +983,19 @@ class App {
         this.autoSaveTimeout = setTimeout(() => {
             this.saveCurrentEntry();
         }, this.settings.autoSaveDelay);
+    }
+
+    applyUndoState(content) {
+        if (content === null) return;
+        this.dom.editor.value = content;
+        if (this.currentMode === 'preview') {
+            this.renderPreview();
+        }
+        this.updateWordCount();
+        this.updateAutoTitle();
+        const parsed = frontmatter.parse(content);
+        this.displayMetadata(parsed.data);
+        this.scheduleAutoSave();
     }
 
     async saveCurrentEntry() {
@@ -1440,6 +1544,9 @@ class App {
     }
 
     async setMode(mode) {
+        // Commit any pending undo snapshot before switching modes
+        if (this.undoManager) this.undoManager.flush();
+
         // Capture scroll position BEFORE switching (from current mode)
         const previousMode = this.currentMode;
         const scrollPosition = this.scrollSync?.capturePosition(previousMode);
@@ -1541,6 +1648,11 @@ class App {
                     case 'em':
                     case 'i':
                         result += '*' + this.processNode(child) + '*';
+                        break;
+                    case 'del':
+                    case 's':
+                    case 'strike':
+                        result += '~~' + this.processNode(child) + '~~';
                         break;
                     case 'blockquote':
                         const quoteLines = this.processNode(child).trim().split('\n');
@@ -2983,6 +3095,7 @@ class App {
             // Set editor content
             this.dom.editor.value = content;
             this.lastSavedContent = content;
+            if (this.undoManager) this.undoManager.init(content);
 
             // Parse and display metadata
             const parsed = frontmatter.parse(content);
@@ -3100,6 +3213,7 @@ class App {
             // Set editor content
             this.dom.editor.value = result.content;
             this.lastSavedContent = result.content;
+            if (this.undoManager) this.undoManager.init(result.content);
 
             // Parse and display metadata
             const parsed = frontmatter.parse(result.content);
@@ -3750,6 +3864,14 @@ class App {
             // Global shortcuts
             if (e.ctrlKey || e.metaKey) {
                 switch (e.key.toLowerCase()) {
+                    case 'z':
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                            this.applyUndoState(this.undoManager?.redo());
+                        } else {
+                            this.applyUndoState(this.undoManager?.undo());
+                        }
+                        break;
                     case 'j':
                         e.preventDefault();
                         if (e.shiftKey) {
@@ -3778,13 +3900,13 @@ class App {
                         this.toggleMetadata();
                         break;
                     case 'b':
-                        if (document.activeElement === this.dom.editor) {
+                        if (document.activeElement === this.dom.editor || this.currentMode === 'preview') {
                             e.preventDefault();
                             this.wrapSelection('**');
                         }
                         break;
                     case 'i':
-                        if (document.activeElement === this.dom.editor) {
+                        if (document.activeElement === this.dom.editor || this.currentMode === 'preview') {
                             e.preventDefault();
                             this.wrapSelection('*');
                         }
